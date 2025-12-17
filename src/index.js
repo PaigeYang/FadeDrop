@@ -228,9 +228,187 @@ const uploadsStore = [];
 // 24-hour grace period after expiration before automatic deletion.
 const GRACE_PERIOD_MS = 24 * 60 * 60 * 1000;
 
+function parseCookies(req) {
+  const header = (req && req.headers && req.headers.cookie) || '';
+  if (!header) return {};
+  return header.split(';').reduce((acc, part) => {
+    const idx = part.indexOf('=');
+    if (idx === -1) return acc;
+    const key = part.slice(0, idx).trim();
+    const raw = part.slice(idx + 1).trim();
+    if (!key) return acc;
+    try {
+      acc[key] = decodeURIComponent(raw);
+    } catch {
+      acc[key] = raw;
+    }
+    return acc;
+  }, {});
+}
+
+function getViewCookieName(id) {
+  return `fadedrop_view_${id}`;
+}
+
+function setViewAuthCookie(res, record) {
+  if (!res || !record || !record.id || !record.passwordVersion) return;
+
+  const cookieName = getViewCookieName(record.id);
+  const cookieValue = encodeURIComponent(record.passwordVersion);
+
+  let maxAgeSeconds = 6 * 60 * 60;
+  const autoDeleteAtMs = Date.parse(record.expiration?.autoDeleteAt || record.expiration?.expiresAt || '');
+  if (Number.isFinite(autoDeleteAtMs)) {
+    const diffSeconds = Math.floor((autoDeleteAtMs - Date.now()) / 1000);
+    if (diffSeconds > 60) maxAgeSeconds = diffSeconds;
+  }
+
+  const parts = [
+    `${cookieName}=${cookieValue}`,
+    'Path=/',
+    `Max-Age=${maxAgeSeconds}`,
+    'HttpOnly',
+    'SameSite=Lax',
+  ];
+  res.setHeader('Set-Cookie', parts.join('; '));
+}
+
 // Dev/test: always enable the 1-minute expiration shortcut.
 // If you want to hide this in production, change this to read from process.env instead.
-const ENABLE_TEST_EXPIRATION_SHORTCUT = true;
+const ONE_MINUTE_EXPIRATION_ENABLED = true;
+
+function getWarmCss() {
+  return `
+    :root {
+      --bg-1: #fbf6ee;
+      --bg-2: #f4ede1;
+      --card: #fffaf2;
+      --border: rgba(60, 45, 30, 0.12);
+      --text: #2a2116;
+      --muted: rgba(42, 33, 22, 0.68);
+      --muted-2: rgba(42, 33, 22, 0.55);
+      --shadow: 0 18px 48px -30px rgba(42, 33, 22, 0.55);
+      --shadow-soft: 0 10px 30px -24px rgba(42, 33, 22, 0.4);
+      --radius-lg: 26px;
+      --radius-md: 18px;
+      --accent: #2f6b4f;
+      --accent-bg: rgba(47, 107, 79, 0.12);
+      --accent-border: rgba(47, 107, 79, 0.18);
+    }
+    * { box-sizing: border-box; }
+    img, video, audio, canvas, svg { max-width: 100%; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      padding: 2.5rem 1.5rem 3.5rem;
+      color: var(--text);
+      background: radial-gradient(1200px 700px at 20% 0%, rgba(255, 255, 255, 0.9), transparent 60%),
+        radial-gradient(1000px 600px at 90% 10%, rgba(255, 245, 225, 0.9), transparent 55%),
+        linear-gradient(180deg, var(--bg-1), var(--bg-2));
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 16px;
+      line-height: 1.5;
+      overflow-x: hidden;
+    }
+    .page { max-width: 980px; margin: 0 auto; width: 100%; }
+    .top-header { margin-bottom: 1.5rem; }
+    .status { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0.65rem; border-radius: 999px; background: var(--accent-bg); border: 1px solid var(--accent-border); color: var(--accent); font-size: 0.8rem; }
+    .status-dot { width: 0.45rem; height: 0.45rem; border-radius: 999px; background: var(--accent); box-shadow: 0 0 0 3px rgba(47, 107, 79, 0.12); }
+    .brand { margin-top: 0.75rem; font-family: ui-serif, Georgia, 'Times New Roman', Times, serif; font-weight: 650; letter-spacing: 0.01em; font-size: 1.15rem; }
+    .tagline { margin: 0.25rem 0 0.9rem; color: var(--muted); font-size: 0.95rem; }
+    h1 { margin: 0; font-family: ui-serif, Georgia, 'Times New Roman', Times, serif; font-weight: 650; font-size: clamp(1.55rem, 4.8vw, 2rem); letter-spacing: 0.01em; line-height: 1.15; }
+    h2 { margin: 0 0 0.35rem; font-size: 0.95rem; font-weight: 650; }
+    p { margin: 0.25rem 0; color: var(--muted); }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .subtitle { margin: 0.45rem 0 0; color: var(--muted); font-size: 1rem; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow);
+      padding: 1.25rem;
+      max-width: 100%;
+    }
+    .card-narrow { max-width: 720px; margin: 0 auto; }
+    .hint { margin: 0; color: var(--muted); font-size: 0.85rem; }
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      padding: 0.75rem 1.25rem;
+      border-radius: 999px;
+      border: 1px solid rgba(47, 107, 79, 0.25);
+      background: var(--accent);
+      color: #fffaf2;
+      font-weight: 650;
+      font-size: 0.95rem;
+      min-height: 44px;
+      cursor: pointer;
+      text-decoration: none;
+      box-shadow: 0 14px 30px -24px rgba(47, 107, 79, 0.8);
+    }
+    .btn-primary:hover { filter: brightness(1.02); text-decoration: none; }
+    .btn-secondary {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0.6rem 1.1rem;
+      border-radius: 999px;
+      border: 1px solid rgba(60, 45, 30, 0.18);
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.6);
+      text-decoration: none;
+      font-size: 0.9rem;
+      min-height: 44px;
+      cursor: pointer;
+    }
+    .btn-secondary:hover { background: rgba(255, 255, 255, 0.8); text-decoration: none; }
+    .input, select {
+      width: 100%;
+      padding: 0.5rem 0.6rem;
+      border-radius: 14px;
+      border: 1px solid rgba(60, 45, 30, 0.18);
+      background: rgba(255, 255, 255, 0.85);
+      color: var(--text);
+      font-size: 1rem;
+      min-height: 44px;
+    }
+    .layout { display: grid; gap: 1rem; margin-top: 1rem; }
+    @media (min-width: 900px) {
+      .layout { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); }
+    }
+    .section { padding: 0.9rem 0.9rem 1rem; border-radius: var(--radius-md); border: 1px solid rgba(60, 45, 30, 0.12); background: rgba(255, 255, 255, 0.55); }
+    table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; font-size: 0.85rem; }
+    th, td { padding: 0.4rem 0.45rem; text-align: left; border-bottom: 1px solid rgba(60, 45, 30, 0.12); }
+    th { color: var(--muted); font-weight: 650; }
+    tbody tr:last-child td { border-bottom: none; }
+    .pill { display: inline-flex; align-items: center; padding: 0.15rem 0.55rem; border-radius: 999px; font-size: 0.75rem; border: 1px solid rgba(60, 45, 30, 0.14); color: var(--text); background: rgba(255, 255, 255, 0.65); }
+    .status-pill { display: inline-flex; align-items: center; padding: 0.15rem 0.6rem; border-radius: 999px; font-size: 0.75rem; border: 1px solid rgba(60, 45, 30, 0.14); }
+    .status-valid { background: rgba(47, 107, 79, 0.12); border-color: rgba(47, 107, 79, 0.22); color: var(--accent); }
+    .status-expired { background: rgba(134, 57, 57, 0.08); border-color: rgba(134, 57, 57, 0.22); color: rgba(134, 57, 57, 0.92); }
+    .status-deleted { background: rgba(60, 45, 30, 0.06); border-color: rgba(60, 45, 30, 0.14); color: var(--muted); }
+    .actions { margin-top: 1.25rem; display: flex; flex-wrap: wrap; gap: 0.75rem; justify-content: flex-end; }
+    .back-link { margin-top: 1.25rem; font-size: 0.85rem; }
+    .error { color: rgba(134, 57, 57, 0.92); }
+    .ok { color: var(--accent); }
+
+    @media (max-width: 768px) {
+      body { padding: 1.5rem 1.5rem 2.25rem; }
+      .actions { justify-content: stretch; }
+    }
+
+    @media (max-width: 480px) {
+      body { padding: 1rem 1rem 2rem; }
+      .card { padding: 1rem; }
+      .actions { flex-direction: column; align-items: stretch; }
+      .actions .btn-primary, .actions .btn-secondary { width: 100%; }
+      table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+      th, td { white-space: nowrap; }
+    }
+  `;
+}
 
 function deleteStoredFiles(filesMeta) {
   (filesMeta || []).forEach((file) => {
@@ -249,85 +427,884 @@ function sendValidationError(res, title, message) {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>${title} • Temporary Media Links</title>
+  <title>${title} • FadeDrop</title>
   <style>
-    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 1.75rem; background: #020617; color: #e5e7eb; }
-    main { max-width: 640px; margin: 0 auto; padding: 1.6rem 1.5rem 1.75rem; border-radius: 1.25rem; background: #020617; border: 1px solid rgba(127,29,29,0.9); box-shadow: 0 25px 50px -24px rgba(15,23,42,0.9); }
-    h1 { font-size: 1.4rem; margin: 0 0 0.4rem; color: #fecaca; }
-    p { margin: 0.25rem 0; color: #fca5a5; }
-    a.button { display: inline-flex; margin-top: 1rem; padding: 0.6rem 1.1rem; border-radius: 999px; border: 1px solid rgba(248,113,113,0.7); color: #fee2e2; text-decoration: none; font-size: 0.9rem; }
-    a.button:hover { background: rgba(127,29,29,0.8); }
+    ${getWarmCss()}
   </style>
 </head>
 <body>
-  <main>
-    <h1>${title}</h1>
-    <p>${message}</p>
-    <a href="/upload" class="button">Back to upload</a>
-  </main>
+  <div class="page">
+    <header class="top-header">
+      <div class="brand">FadeDrop</div>
+    </header>
+    <main class="card card-narrow">
+      <h1>${title}</h1>
+      <p class="error">${message}</p>
+      <div class="actions">
+        <a href="/" class="btn-secondary">Back to upload</a>
+      </div>
+    </main>
+  </div>
 </body>
 </html>`);
 }
 
-function parseCookies(req) {
-  const header = req.headers.cookie || '';
-  return header.split(';').reduce((acc, part) => {
-    const [rawName, ...rest] = part.split('=');
-    if (!rawName) return acc;
-    const name = rawName.trim();
-    if (!name) return acc;
-    acc[name] = decodeURIComponent(rest.join('=') || '');
-    return acc;
-  }, {});
-}
-
-function getViewCookieName(uploadId) {
-  return `tml_auth_${uploadId}`;
-}
-
-function setViewAuthCookie(res, record) {
-  if (!record.passwordVersion) return;
-  const cookieName = getViewCookieName(record.id);
-  const value = encodeURIComponent(record.passwordVersion);
-  const header = `${cookieName}=${value}; Path=/v/${record.id}; HttpOnly; SameSite=Lax`;
-  res.setHeader('Set-Cookie', header);
-}
-
-app.get('/', (req, res) => {
-  res.status(200).send(`<!DOCTYPE html>
+function sendNotFoundPage(res) {
+  return res.status(404).send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Temporary Media Links</title>
+  <title>Not found • FadeDrop</title>
   <style>
-    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 2rem; background: #0f172a; color: #e5e7eb; }
-    .card { max-width: 640px; margin: 0 auto; padding: 2rem; border-radius: 1rem; background: #020617; box-shadow: 0 25px 50px -12px rgba(15,23,42,0.8); border: 1px solid #1f2937; }
-    h1 { font-size: 1.75rem; margin-bottom: 0.5rem; }
-    p { margin: 0.25rem 0; color: #9ca3af; }
-    .status { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0.75rem; border-radius: 999px; background: rgba(22,163,74,0.1); color: #bbf7d0; font-size: 0.875rem; margin-top: 0.75rem; }
-    .status-dot { width: 0.5rem; height: 0.5rem; border-radius: 999px; background: #22c55e; box-shadow: 0 0 0 4px rgba(34,197,94,0.35); }
-    .actions { margin-top: 1.5rem; }
-    .btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; padding: 0.75rem 1.25rem; border-radius: 999px; border: none; background: linear-gradient(to right, #4f46e5, #06b6d4); color: white; font-weight: 600; text-decoration: none; cursor: pointer; box-shadow: 0 10px 25px -5px rgba(79,70,229,0.6); }
-    .btn-primary:hover { filter: brightness(1.05); }
-    .btn-primary:active { transform: translateY(1px); box-shadow: 0 4px 12px -4px rgba(15,23,42,0.7); }
+    ${getWarmCss()}
   </style>
 </head>
 <body>
-  <main class="card">
-    <h1>Temporary Media Links</h1>
-    <p>Ephemeral sharing for images, video, and audio.</p>
-    <div class="status">
-      <span class="status-dot"></span>
-      <span>Service is running</span>
-    </div>
-    <div class="actions">
-      <a class="btn-primary" href="/upload">Create a temporary link</a>
-    </div>
-  </main>
+  <div class="page">
+    <header class="top-header">
+      <div class="brand">FadeDrop</div>
+    </header>
+    <main class="card card-narrow">
+      <h1>Page not found</h1>
+      <p>The page you’re looking for doesn’t exist.</p>
+      <div class="actions">
+        <a href="/" class="btn-primary">Go to upload</a>
+      </div>
+    </main>
+  </div>
 </body>
 </html>`);
+}
+
+function getStatusPageHtml() {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FadeDrop</title>
+  <style>
+    ${getWarmCss()}
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="top-header">
+      <div class="status"><span class="status-dot"></span><span>Service is running</span></div>
+      <div class="brand">FadeDrop</div>
+      <p class="tagline">Temporary media links for images, video, and audio.</p>
+      <h1>Service status</h1>
+      <p class="subtitle">Everything looks good. You can create a new upload any time.</p>
+    </header>
+
+    <main class="card card-narrow">
+      <h2>Current status</h2>
+      <p class="hint">FadeDrop is online and ready to accept uploads.</p>
+      <div class="actions">
+        <a class="btn-primary" href="/">Create a link</a>
+      </div>
+    </main>
+  </div>
+</body>
+</html>`;
+}
+
+function getUploadPageHtml(options = {}) {
+  const showStatusBadge = options.showStatusBadge === true;
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Upload • FadeDrop</title>
+  <style>
+    :root {
+      --bg-1: #fbf6ee;
+      --bg-2: #f4ede1;
+      --card: #fffaf2;
+      --border: rgba(60, 45, 30, 0.12);
+      --text: #2a2116;
+      --muted: rgba(42, 33, 22, 0.68);
+      --muted-2: rgba(42, 33, 22, 0.55);
+      --shadow: 0 18px 48px -30px rgba(42, 33, 22, 0.55);
+      --shadow-soft: 0 10px 30px -24px rgba(42, 33, 22, 0.4);
+      --radius-lg: 26px;
+      --radius-md: 18px;
+      --accent: #2f6b4f;
+      --accent-bg: rgba(47, 107, 79, 0.12);
+      --accent-border: rgba(47, 107, 79, 0.18);
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      padding: 2.5rem 1.25rem 3.5rem;
+      color: var(--text);
+      background: radial-gradient(1200px 700px at 20% 0%, rgba(255, 255, 255, 0.9), transparent 60%),
+        radial-gradient(1000px 600px at 90% 10%, rgba(255, 245, 225, 0.9), transparent 55%),
+        linear-gradient(180deg, var(--bg-1), var(--bg-2));
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    .page { max-width: 980px; margin: 0 auto; }
+    .top-header { margin-bottom: 2.25rem; }
+    .status { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0.65rem; border-radius: 999px; background: var(--accent-bg); border: 1px solid var(--accent-border); color: var(--accent); font-size: 0.8rem; }
+    .status-dot { width: 0.45rem; height: 0.45rem; border-radius: 999px; background: var(--accent); box-shadow: 0 0 0 3px rgba(47, 107, 79, 0.12); }
+    .brand { margin-top: 0.75rem; font-family: ui-serif, Georgia, 'Times New Roman', Times, serif; font-weight: 650; letter-spacing: 0.01em; font-size: 1.15rem; }
+    .tagline { margin: 0.25rem 0 0.9rem; color: var(--muted); font-size: 0.95rem; }
+    .headline {
+      margin: 0;
+      font-family: ui-serif, Georgia, 'Times New Roman', Times, serif;
+      font-weight: 650;
+      font-size: clamp(2.15rem, 4.6vw, 2.7rem);
+      letter-spacing: 0.01em;
+      line-height: 1.06;
+      max-width: none;
+    }
+    .headline .headline-main { display: block; }
+    .headline .headline-sub {
+      display: block;
+      margin-top: 0.08em;
+      font-size: 0.86em;
+      font-weight: 600;
+      color: rgba(42, 33, 22, 0.78);
+    }
+    .subtitle { margin: 0.75rem 0 0; color: var(--muted); font-size: 1.08rem; max-width: 56ch; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow);
+      padding: 1.25rem;
+      transition: transform 180ms ease, box-shadow 180ms ease;
+    }
+    .card:hover { transform: translateY(-1px); box-shadow: 0 22px 60px -34px rgba(42, 33, 22, 0.6); }
+    .form-grid { display: grid; gap: 1rem; }
+    @media (min-width: 900px) {
+      .form-grid { grid-template-columns: 1.3fr 0.7fr; align-items: start; }
+    }
+    .section { padding: 0.25rem 0.25rem 0.5rem; }
+    .section-primary .section-title { font-size: 1.05rem; }
+    .section-secondary .section-title { font-size: 0.92rem; color: rgba(42, 33, 22, 0.85); }
+    .section-secondary .hint { color: rgba(42, 33, 22, 0.6); }
+    .section-title { font-size: 0.95rem; font-weight: 650; margin: 0 0 0.35rem; }
+    .hint { margin: 0; color: var(--muted); font-size: 0.85rem; }
+    .divider { height: 1px; background: rgba(60, 45, 30, 0.08); margin: 0.85rem 0; }
+
+    .dropzone {
+      margin-top: 0.65rem;
+      border-radius: var(--radius-md);
+      border: 2px dashed rgba(60, 45, 30, 0.26);
+      background: rgba(255, 255, 255, 0.7);
+      padding: 1.1rem;
+      display: grid;
+      gap: 0.45rem;
+      cursor: pointer;
+      transition: background 180ms ease, border-color 180ms ease, transform 180ms ease, box-shadow 180ms ease;
+      box-shadow: 0 10px 22px -20px rgba(42, 33, 22, 0.35);
+    }
+    .dropzone:hover { background: rgba(255, 255, 255, 0.85); border-color: rgba(60, 45, 30, 0.32); transform: translateY(-1px); }
+    .dropzone.is-dragover { background: rgba(47, 107, 79, 0.1); border-color: rgba(47, 107, 79, 0.42); box-shadow: 0 18px 40px -30px rgba(47, 107, 79, 0.8); }
+    .dz-primary { font-weight: 650; font-size: 1rem; }
+    .dz-secondary { color: var(--muted); font-size: 0.85rem; }
+    .dz-rules { color: var(--muted-2); font-size: 0.8rem; }
+
+    input[type="file"] { display: none; }
+
+    .file-chips { list-style: none; padding: 0; margin: 0.75rem 0 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .file-chip { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0.55rem; border-radius: 999px; border: 1px solid rgba(60, 45, 30, 0.14); background: rgba(255, 255, 255, 0.75); box-shadow: var(--shadow-soft); max-width: 100%; }
+    .file-chip .name { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .file-chip .meta { color: var(--muted-2); font-size: 0.8rem; }
+    .file-chip button { border: none; background: transparent; cursor: pointer; color: rgba(134, 57, 57, 0.9); font-size: 0.95rem; line-height: 1; padding: 0.15rem 0.25rem; border-radius: 8px; }
+    .file-chip button:hover { background: rgba(134, 57, 57, 0.1); }
+    .warning { margin: 0.6rem 0 0; color: rgba(134, 57, 57, 0.92); font-size: 0.85rem; }
+
+    .segmented { margin-top: 0.65rem; display: inline-flex; border-radius: 999px; border: 1px solid rgba(60, 45, 30, 0.16); background: rgba(255, 255, 255, 0.7); overflow: hidden; }
+    .segmented label { position: relative; }
+    .segmented input { position: absolute; opacity: 0; inset: 0; }
+    .segment { padding: 0.45rem 0.75rem; font-size: 0.85rem; color: var(--muted); cursor: pointer; display: inline-flex; align-items: center; gap: 0.35rem; }
+    .segmented input:checked + .segment { background: rgba(47, 107, 79, 0.12); color: var(--accent); }
+
+    .chips { margin-top: 0.65rem; display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .chip { border-radius: 999px; border: 1px solid rgba(60, 45, 30, 0.16); background: rgba(255, 255, 255, 0.7); padding: 0.35rem 0.65rem; cursor: pointer; font-size: 0.85rem; color: var(--muted); transition: background 180ms ease, border-color 180ms ease; }
+    .chip[aria-pressed="true"] { background: rgba(47, 107, 79, 0.12); border-color: rgba(47, 107, 79, 0.22); color: var(--accent); }
+    .chip:hover { background: rgba(255, 255, 255, 0.85); }
+
+    .custom-exp { margin-top: 0.75rem; display: none; gap: 0.6rem; align-items: center; }
+    .custom-exp.is-open { display: flex; }
+    .custom-exp input, .custom-exp select {
+      padding: 0.45rem 0.55rem;
+      border-radius: 14px;
+      border: 1px solid rgba(60, 45, 30, 0.18);
+      background: rgba(255, 255, 255, 0.85);
+      color: var(--text);
+      font-size: 0.9rem;
+    }
+    .timing { margin-top: 0.75rem; font-size: 0.85rem; color: var(--muted); display: grid; gap: 0.25rem; }
+    .timing strong { color: var(--text); font-weight: 650; }
+
+    details.advanced { margin-top: 0.75rem; border-radius: var(--radius-md); border: 1px solid rgba(60, 45, 30, 0.12); background: rgba(255, 255, 255, 0.65); padding: 0.75rem 0.85rem; }
+    details.advanced summary { cursor: pointer; font-weight: 650; color: var(--text); }
+    details.advanced summary::marker { color: var(--muted); }
+    .adv-inner { margin-top: 0.75rem; display: grid; gap: 0.65rem; }
+    .input { width: 100%; padding: 0.5rem 0.6rem; border-radius: 14px; border: 1px solid rgba(60, 45, 30, 0.18); background: rgba(255, 255, 255, 0.85); color: var(--text); font-size: 0.95rem; }
+    .label { font-size: 0.85rem; font-weight: 650; }
+    .helper { font-size: 0.82rem; color: var(--muted); }
+
+    .cta-bar { margin-top: 1.15rem; padding-top: 1.15rem; border-top: 1px solid rgba(60, 45, 30, 0.1); display: flex; gap: 1rem; align-items: flex-start; justify-content: flex-end; flex-wrap: wrap; }
+    .cta-right { display: grid; gap: 0.35rem; justify-items: end; }
+    .btn-primary { padding: 0.9rem 1.55rem; border-radius: 999px; border: 1px solid rgba(47, 107, 79, 0.25); background: var(--accent); color: #fffaf2; font-weight: 650; font-size: 1.02rem; cursor: pointer; box-shadow: 0 18px 38px -30px rgba(47, 107, 79, 0.95); }
+    .btn-primary:hover { filter: brightness(1.03); }
+    .btn-primary:focus-visible { outline: 3px solid rgba(47, 107, 79, 0.25); outline-offset: 2px; }
+    .reassure { font-size: 0.82rem; color: var(--muted); text-align: right; max-width: 360px; }
+    .trust { margin-top: 0.15rem; font-size: 0.82rem; color: rgba(42, 33, 22, 0.62); text-align: right; }
+
+    @media (max-width: 768px) {
+      body { padding: 1.75rem 1.5rem 2.75rem; }
+      .headline { font-size: clamp(1.95rem, 6.6vw, 2.35rem); line-height: 1.08; max-width: 34ch; }
+      .headline .headline-sub { font-size: 0.88em; }
+      .top-header { margin-bottom: 1.6rem; }
+      .form-grid { grid-template-columns: 1fr; }
+      .section[style*="grid-column"] { grid-column: auto !important; }
+      .cta-bar { justify-content: stretch; }
+      .cta-right { width: 100%; justify-items: stretch; }
+      .cta-right .btn-primary { width: 100%; }
+      .reassure, .trust { text-align: left; max-width: none; }
+      .custom-exp { flex-wrap: wrap; }
+      .segmented { width: 100%; }
+      .segment { flex: 1 1 auto; justify-content: center; }
+    }
+
+    @media (max-width: 480px) {
+      body { padding: 1rem 1rem 2.25rem; }
+      .headline { font-size: clamp(1.7rem, 8vw, 2.1rem); line-height: 1.12; max-width: 19ch; }
+      .headline .headline-sub { margin-top: 0.12em; font-size: 0.9em; }
+      .card { padding: 1rem; }
+      .dropzone { padding: 1rem; }
+      .chip { padding: 0.55rem 0.8rem; min-height: 44px; }
+      .segment { min-height: 44px; }
+      .file-chip .name { max-width: 180px; }
+    }
+
+    @media (max-width: 420px) {
+      .headline { max-width: 18ch; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="top-header">
+      ${
+        showStatusBadge
+          ? '<div class="status"><span class="status-dot"></span><span>Service is running</span></div>'
+          : ''
+      }
+      <div class="brand">FadeDrop</div>
+      <h1 class="headline">Create links that disappear automatically</h1>
+      <p class="subtitle">Temporary links for images, video, and audio — automatically deleted.</p>
+    </header>
+
+    <form action="/upload" method="post" enctype="multipart/form-data">
+      <section class="card" aria-label="Upload form">
+        <div class="form-grid">
+          <div class="section section-primary" style="grid-column:1;">
+            <h2 class="section-title">Files</h2>
+            <p class="hint">Start here. We’ll auto-detect media type from your files.</p>
+
+            <div id="dropzone" class="dropzone" role="button" tabindex="0" aria-label="File dropzone">
+              <div class="dz-primary">Drop files to create a temporary link</div>
+              <div class="dz-secondary">or choose files</div>
+              <div class="dz-rules" id="file-rules">Images: up to 10 • Video: 1 • Audio: up to 2</div>
+            </div>
+
+            <input type="file" id="files-input" accept="image/*,video/*,audio/*" multiple />
+            <input type="file" id="images-hidden" name="images" accept="image/*" multiple style="display:none;" />
+            <input type="file" id="video-hidden" name="video" accept="video/*" style="display:none;" />
+            <input type="file" id="audio-hidden" name="audio" accept="audio/*" multiple style="display:none;" />
+
+            <ul class="file-chips" id="files-list"></ul>
+            <p class="warning" id="files-warning" style="display:none;"></p>
+          </div>
+
+          <div class="section section-secondary" style="grid-column:2;">
+            <h2 class="section-title">Expiration</h2>
+            <p class="hint">Default is 1 day. Files auto-delete after a 24-hour grace period.</p>
+
+            <div class="chips" id="expiration-chips">
+              <button type="button" class="chip" data-preset="1d" aria-pressed="true">1 day</button>
+              <button type="button" class="chip" data-preset="3d" aria-pressed="false">3 days</button>
+              <button type="button" class="chip" data-preset="7d" aria-pressed="false">7 days</button>
+              <button type="button" class="chip" data-preset="30d" aria-pressed="false">30 days</button>
+              <button type="button" class="chip" data-preset="custom" aria-pressed="false">Custom…</button>
+            </div>
+
+            <div class="custom-exp" id="custom-exp">
+              <input type="number" id="expiresValue" name="expiresValue" min="1" max="30" value="1" />
+              <select id="expiresUnit" name="expiresUnit">
+                <option value="hours">Hours</option>
+                <option value="days" selected>Days</option>
+              </select>
+            </div>
+
+            <div class="timing" aria-live="polite">
+              <div>Expires at: <strong id="expires-at">—</strong></div>
+              <div>Auto-deletes at: <strong id="autodelete-at">—</strong></div>
+            </div>
+          </div>
+
+          <div class="section section-secondary" style="grid-column:1;">
+            <h2 class="section-title">Media type</h2>
+            <p class="hint">We’ll auto-detect this from your files.</p>
+
+            <div class="segmented" aria-label="Media type">
+              <label>
+                <input type="radio" name="mediaType" value="images" checked />
+                <span class="segment">Images</span>
+              </label>
+              <label>
+                <input type="radio" name="mediaType" value="video" />
+                <span class="segment">Video</span>
+              </label>
+              <label>
+                <input type="radio" name="mediaType" value="audio" />
+                <span class="segment">Audio</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="section section-secondary" style="grid-column:2;">
+            <details class="advanced" open="false">
+              <summary>Advanced options</summary>
+              <div class="adv-inner">
+                <div>
+                  <div class="label">Password protection (optional)</div>
+                  <div class="helper">Share the password separately for extra privacy.</div>
+                </div>
+                <input class="input" type="password" name="password" autocomplete="new-password" placeholder="Leave blank for no password" />
+              </div>
+            </details>
+          </div>
+        </div>
+
+        <div class="cta-bar">
+          <div class="cta-right">
+            <button type="submit" class="btn-primary">Create link</button>
+            <div class="reassure">
+              Files are automatically deleted after expiration.
+            </div>
+            <div class="trust">Private &amp; unlisted • Auto-deleted • No signup required</div>
+          </div>
+        </div>
+      </section>
+    </form>
+  </div>
+
+  <script>
+    const mediaInputs = document.querySelectorAll('input[name="mediaType"]');
+    const visibleFilesInput = document.getElementById('files-input');
+    const dropzone = document.getElementById('dropzone');
+    const expirationChips = document.getElementById('expiration-chips');
+    const customExp = document.getElementById('custom-exp');
+    const expiresValueInput = document.getElementById('expiresValue');
+    const expiresUnitSelect = document.getElementById('expiresUnit');
+    const expiresAtEl = document.getElementById('expires-at');
+    const autoDeleteAtEl = document.getElementById('autodelete-at');
+
+    const hiddenInputs = {
+      images: document.getElementById('images-hidden'),
+      video: document.getElementById('video-hidden'),
+      audio: document.getElementById('audio-hidden'),
+    };
+
+    const listEl = document.getElementById('files-list');
+    const warningEl = document.getElementById('files-warning');
+
+    const GRACE_PERIOD_MS = 24 * 60 * 60 * 1000;
+
+    const state = {
+      images: [],
+      video: [],
+      audio: [],
+      max: {
+        images: 10,
+        video: 1,
+        audio: 2,
+      },
+    };
+
+    function setSelectedMediaType(type) {
+      const input = document.querySelector('input[name="mediaType"][value="' + type + '"]');
+      if (input) {
+        input.checked = true;
+      }
+    }
+
+    function getSelectedMediaType() {
+      const selected = document.querySelector('input[name="mediaType"]:checked');
+      return selected ? selected.value : 'images';
+    }
+
+    function inferMediaTypeFromFiles(files) {
+      const first = (files && files[0]) || null;
+      if (!first) return 'images';
+      const mime = (first.type || '').toLowerCase();
+      if (mime.startsWith('video/')) return 'video';
+      if (mime.startsWith('audio/')) return 'audio';
+      if (mime.startsWith('image/')) return 'images';
+      return 'images';
+    }
+
+    function formatTimestamp(date) {
+      try {
+        return date.toLocaleString(undefined, {
+          year: 'numeric',
+          month: 'short',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+      } catch (e) {
+        return date.toISOString();
+      }
+    }
+
+    function getDurationMsFromForm() {
+      const value = parseInt((expiresValueInput && expiresValueInput.value) || '1', 10);
+      const unit = (expiresUnitSelect && expiresUnitSelect.value) || 'days';
+      if (!Number.isFinite(value) || value <= 0) return 24 * 60 * 60 * 1000;
+      if (unit === 'hours') return value * 60 * 60 * 1000;
+      if (unit === 'days') return value * 24 * 60 * 60 * 1000;
+      if (unit === 'minutes') return value * 60 * 1000;
+      return value * 24 * 60 * 60 * 1000;
+    }
+
+    function updateTimingPreview() {
+      const now = new Date();
+      const durationMs = getDurationMsFromForm();
+      const expiresAt = new Date(now.getTime() + durationMs);
+      const autoDeleteAt = new Date(now.getTime() + durationMs + GRACE_PERIOD_MS);
+      if (expiresAtEl) expiresAtEl.textContent = formatTimestamp(expiresAt);
+      if (autoDeleteAtEl) autoDeleteAtEl.textContent = formatTimestamp(autoDeleteAt);
+    }
+
+    function clearHiddenInputs() {
+      Object.keys(hiddenInputs).forEach((type) => {
+        const hidden = hiddenInputs[type];
+        if (!hidden) return;
+        hidden.files = new DataTransfer().files;
+      });
+    }
+
+    function syncHiddenInput(type) {
+      const hidden = hiddenInputs[type];
+      if (!hidden) return;
+      const dt = new DataTransfer();
+      (state[type] || []).forEach((file) => dt.items.add(file));
+      hidden.files = dt.files;
+    }
+
+    function renderList(type) {
+      if (!listEl) return;
+      const files = state[type] || [];
+      listEl.innerHTML = '';
+      files.forEach((file, index) => {
+        const li = document.createElement('li');
+        li.className = 'file-chip';
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'name';
+        nameSpan.textContent = file.name || '(unnamed file)';
+        const metaSpan = document.createElement('span');
+        metaSpan.className = 'meta';
+        metaSpan.textContent = (file.size / (1024 * 1024)).toFixed(2) + ' MB';
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.textContent = '×';
+        removeBtn.addEventListener('click', () => {
+          state[type].splice(index, 1);
+          syncHiddenInput(type);
+          renderList(type);
+          if (warningEl) warningEl.style.display = 'none';
+        });
+        li.appendChild(nameSpan);
+        li.appendChild(metaSpan);
+        li.appendChild(removeBtn);
+        listEl.appendChild(li);
+      });
+    }
+
+    function handleFilesAdded(fileList) {
+      const files = Array.from(fileList || []);
+      if (!files.length) return;
+      const inferred = inferMediaTypeFromFiles(files);
+      setSelectedMediaType(inferred);
+
+      const max = state.max[inferred];
+      const allowedPrefix = inferred === 'images' ? 'image/' : inferred === 'video' ? 'video/' : 'audio/';
+      const filtered = files.filter((f) => (f.type || '').toLowerCase().startsWith(allowedPrefix));
+
+      const current = state[inferred] || [];
+      const next = [...current];
+      filtered.forEach((f) => {
+        const duplicate = next.some((existing) => {
+          return existing.name === f.name && existing.size === f.size && existing.lastModified === f.lastModified;
+        });
+        if (duplicate) return;
+        if (inferred === 'video') {
+          // Single video: replace
+          next.splice(0, next.length, f);
+          return;
+        }
+        if (next.length < max) {
+          next.push(f);
+        }
+      });
+
+      state.images = inferred === 'images' ? next : [];
+      state.video = inferred === 'video' ? next : [];
+      state.audio = inferred === 'audio' ? next : [];
+      clearHiddenInputs();
+      state[inferred] = next;
+      syncHiddenInput(inferred);
+      renderList(inferred);
+
+      if (warningEl) {
+        warningEl.style.display = 'none';
+      }
+
+      if (files.length > max) {
+        if (warningEl) {
+          const messages = {
+            images: 'You can upload up to 10 images per upload.',
+            audio: 'You can upload up to 2 audio files per upload.',
+            video: 'You can upload only 1 video file per upload.',
+          };
+          warningEl.textContent = messages[inferred] || 'Too many files selected.';
+          warningEl.style.display = 'block';
+        }
+      }
+    }
+
+    function setExpirationPreset(preset) {
+      if (!expiresValueInput || !expiresUnitSelect) return;
+      if (customExp) customExp.classList.remove('is-open');
+      if (preset === 'custom') {
+        if (customExp) customExp.classList.add('is-open');
+        updateTimingPreview();
+        return;
+      }
+      if (preset === '1d') {
+        expiresValueInput.value = '1';
+        expiresUnitSelect.value = 'days';
+      } else if (preset === '3d') {
+        expiresValueInput.value = '3';
+        expiresUnitSelect.value = 'days';
+      } else if (preset === '7d') {
+        expiresValueInput.value = '7';
+        expiresUnitSelect.value = 'days';
+      } else if (preset === '30d') {
+        expiresValueInput.value = '30';
+        expiresUnitSelect.value = 'days';
+      }
+      updateTimingPreview();
+    }
+
+    if (visibleFilesInput) {
+      visibleFilesInput.addEventListener('change', (event) => {
+        handleFilesAdded(event.target.files);
+        event.target.value = '';
+      });
+    }
+
+    function preventDefaults(event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+
+    if (dropzone && visibleFilesInput) {
+      dropzone.addEventListener('click', () => visibleFilesInput.click());
+      dropzone.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          visibleFilesInput.click();
+        }
+      });
+
+      ['dragenter', 'dragover', 'dragleave', 'drop'].forEach((eventName) => {
+        dropzone.addEventListener(eventName, preventDefaults, false);
+      });
+
+      ['dragenter', 'dragover'].forEach((eventName) => {
+        dropzone.addEventListener(eventName, () => dropzone.classList.add('is-dragover'), false);
+      });
+      ['dragleave', 'drop'].forEach((eventName) => {
+        dropzone.addEventListener(eventName, () => dropzone.classList.remove('is-dragover'), false);
+      });
+
+      dropzone.addEventListener('drop', (event) => {
+        const dt = event.dataTransfer;
+        if (!dt) return;
+        handleFilesAdded(dt.files);
+      });
+    }
+
+    if (expirationChips) {
+      expirationChips.addEventListener('click', (event) => {
+        const btn = event.target && event.target.closest && event.target.closest('button[data-preset]');
+        if (!btn) return;
+        const preset = btn.getAttribute('data-preset');
+        Array.from(expirationChips.querySelectorAll('button[data-preset]')).forEach((b) => {
+          b.setAttribute('aria-pressed', b === btn ? 'true' : 'false');
+        });
+        setExpirationPreset(preset);
+      });
+    }
+
+    if (expiresValueInput) {
+      expiresValueInput.addEventListener('input', updateTimingPreview);
+    }
+    if (expiresUnitSelect) {
+      expiresUnitSelect.addEventListener('change', updateTimingPreview);
+    }
+
+    mediaInputs.forEach((input) => {
+      input.addEventListener('change', () => {
+        state.images = [];
+        state.video = [];
+        state.audio = [];
+        clearHiddenInputs();
+        if (listEl) listEl.innerHTML = '';
+        if (warningEl) warningEl.style.display = 'none';
+      });
+    });
+
+    setSelectedMediaType(getSelectedMediaType());
+    updateTimingPreview();
+  </script>
+</body>
+</html>`;
+}
+
+app.get('/', (req, res) => {
+  res.status(200).send(getUploadPageHtml({ showStatusBadge: false }));
 });
+
+app.get('/status', (req, res) => {
+  res.status(200).send(getStatusPageHtml());
+});
+
+app.post(
+  '/upload',
+  upload.fields([
+    { name: 'images', maxCount: 10 },
+    { name: 'video', maxCount: 1 },
+    { name: 'audio', maxCount: 2 },
+  ]),
+  (req, res) => {
+    try {
+      const uploadedFiles = []
+        .concat((req.files && req.files.images) || [])
+        .concat((req.files && req.files.video) || [])
+        .concat((req.files && req.files.audio) || []);
+
+      const mediaType = (req.body && req.body.mediaType) || 'images';
+      const expiresValueRaw = (req.body && req.body.expiresValue) || '1';
+      const expiresUnitRaw = (req.body && req.body.expiresUnit) || 'days';
+
+      if (!uploadedFiles.length) {
+        return sendValidationError(res, 'No files selected', 'Please choose at least one file to upload.');
+      }
+
+      const expiresValue = Math.max(1, Math.min(30, parseInt(String(expiresValueRaw), 10) || 1));
+      const expiresUnit = expiresUnitRaw === 'hours' ? 'hours' : 'days';
+      const durationMs = expiresUnit === 'hours' ? expiresValue * 60 * 60 * 1000 : expiresValue * 24 * 60 * 60 * 1000;
+
+      const now = Date.now();
+      const expiresAt = new Date(now + durationMs);
+      const autoDeleteAt = new Date(now + durationMs + GRACE_PERIOD_MS);
+
+      const id = crypto.randomBytes(10).toString('hex');
+      const dashboardKey = crypto.randomBytes(12).toString('base64url');
+
+      const passwordRaw = (req.body && req.body.password) || '';
+      const trimmedPassword = String(passwordRaw).trim();
+      let password = null;
+      let passwordVersion = null;
+      if (trimmedPassword) {
+        const salt = crypto.randomBytes(16).toString('hex');
+        const iterations = 100000;
+        const keylen = 64;
+        const digest = 'sha512';
+        const hash = crypto.pbkdf2Sync(trimmedPassword, salt, iterations, keylen, digest).toString('hex');
+        password = { algorithm: 'pbkdf2', iterations, keylen, digest, salt, hash };
+        passwordVersion = crypto.randomBytes(8).toString('hex');
+      }
+
+      const files = uploadedFiles.map((f) => ({
+        fieldName: f.fieldname,
+        storedFilename: f.filename,
+        storedPath: f.path,
+        originalFilename: f.originalname,
+        mimeType: f.mimetype,
+        size: f.size,
+      }));
+
+      const record = {
+        id,
+        mediaType,
+        files,
+        expiration: {
+          value: expiresValue,
+          unit: expiresUnit,
+          durationMs,
+          expiresAt: expiresAt.toISOString(),
+          autoDeleteAt: autoDeleteAt.toISOString(),
+        },
+        password,
+        createdAt: new Date(now).toISOString(),
+        countdownVisible: false,
+        viewCount: 0,
+        maxViews: null,
+        deleted: false,
+        expired: false,
+        deletedReason: null,
+        dashboardKey,
+        passwordVersion,
+      };
+
+      uploadsStore.push(record);
+
+      const viewPath = `/v/${id}`;
+      const viewUrl = `${req.protocol}://${req.get('host')}${viewPath}`;
+      const dashboardPath = `/dashboard/${id}?key=${encodeURIComponent(dashboardKey)}`;
+      const dashboardUrl = `${req.protocol}://${req.get('host')}${dashboardPath}`;
+
+      return res.status(200).send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Link ready • FadeDrop</title>
+  <style>
+    ${getWarmCss()}
+    .link-box {
+      margin-top: 0.95rem;
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(47, 107, 79, 0.22);
+      background: rgba(47, 107, 79, 0.08);
+      padding: 0.85rem;
+      display: grid;
+      gap: 0.65rem;
+    }
+    .link-actions { display: grid; gap: 0.6rem; }
+    .link-action-row { display: grid; gap: 0.6rem; }
+    @media (min-width: 720px) { .link-action-row { grid-template-columns: 1fr auto; align-items: center; } }
+    .link-input {
+      width: 100%;
+      padding: 0.65rem 0.75rem;
+      border-radius: 14px;
+      border: 1px solid rgba(60, 45, 30, 0.18);
+      background: rgba(255, 255, 255, 0.88);
+      color: var(--text);
+      font-size: 0.95rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+    }
+    .btn-copy { padding: 0.7rem 1.05rem; font-size: 0.92rem; }
+    .btn-manage {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0.7rem 1.05rem;
+      border-radius: 999px;
+      border: 1px solid rgba(60, 45, 30, 0.18);
+      background: rgba(255, 255, 255, 0.6);
+      color: var(--text);
+      text-decoration: none;
+      font-weight: 650;
+      font-size: 0.92rem;
+      min-height: 44px;
+      white-space: nowrap;
+    }
+    .btn-manage:hover { background: rgba(255, 255, 255, 0.8); text-decoration: none; }
+    .copy-status { font-size: 0.85rem; color: var(--muted); }
+    @media (max-width: 480px) {
+      .btn-copy { width: 100%; min-height: 48px; font-size: 1rem; }
+      .btn-manage { width: 100%; min-height: 48px; font-size: 1rem; }
+      .link-input { font-size: 1rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="top-header">
+      <div class="brand">FadeDrop</div>
+      <p class="tagline">Temporary media links for images, video, and audio.</p>
+    </header>
+    <main class="card card-narrow">
+      <h1>Link ready</h1>
+      <p>Your temporary link is ready. It will disappear automatically after expiration.</p>
+      <div class="link-box" aria-label="Generated link">
+        <div class="link-actions">
+          <div class="link-action-row">
+            <input id="view-link" class="link-input" type="text" value="${viewUrl}" readonly />
+            <button id="copy-link" class="btn-primary btn-copy" type="button">Copy link</button>
+          </div>
+          <div class="link-action-row">
+            <input class="link-input" type="text" value="${dashboardUrl}" readonly />
+            <a class="btn-manage" href="${dashboardPath}" target="_blank" rel="noopener noreferrer">Link settings</a>
+          </div>
+        </div>
+        <div id="copy-status" class="copy-status" aria-live="polite">Private &amp; unlisted • Auto-deleted • No signup required</div>
+      </div>
+      <div class="actions">
+        <a href="/" class="btn-secondary">Upload more</a>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const input = document.getElementById('view-link');
+    const inputs = Array.from(document.querySelectorAll('.link-input'));
+    const btn = document.getElementById('copy-link');
+    const status = document.getElementById('copy-status');
+
+    function setStatus(text) {
+      if (status) status.textContent = text;
+    }
+
+    async function copyText(value) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(value);
+        return;
+      }
+      if (input) {
+        input.focus();
+        input.select();
+        document.execCommand('copy');
+      }
+    }
+
+    if (btn && input) {
+      btn.addEventListener('click', async () => {
+        try {
+          await copyText(input.value);
+          setStatus('Copied to clipboard. Private & unlisted • Auto-deleted • No signup required');
+          btn.textContent = 'Copied';
+          setTimeout(() => { btn.textContent = 'Copy link'; }, 1400);
+        } catch (e) {
+          setStatus('Copy failed. You can manually select the link and copy it.');
+        }
+      });
+      inputs.forEach((el) => el.addEventListener('click', () => el.select()));
+    }
+  </script>
+</body>
+</html>`);
+    } catch (err) {
+      console.error('Error handling upload:', err);
+      return res.status(500).send('Upload failed');
+    }
+  }
+);
 
 app.post('/dashboard/:id/password', (req, res) => {
   const { id } = req.params;
@@ -430,7 +1407,7 @@ app.post('/dashboard/:id/password', (req, res) => {
   }
 });
 
-app.get('/dashboard/:id', (req, res) => {
+ app.get('/dashboard/:id', (req, res) => {
   const { id } = req.params;
   const key = req.query.key;
 
@@ -442,22 +1419,22 @@ app.get('/dashboard/:id', (req, res) => {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Invalid upload ID • Temporary Media Links</title>
+  <title>Invalid link • FadeDrop</title>
   <style>
-    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 1.75rem; background: #020617; color: #e5e7eb; }
-    main { max-width: 720px; margin: 0 auto; padding: 1.75rem 1.5rem 2rem; border-radius: 1.25rem; background: #020617; border: 1px solid rgba(55,65,81,0.9); box-shadow: 0 25px 50px -24px rgba(15,23,42,0.9); }
-    h1 { font-size: 1.5rem; margin: 0 0 0.4rem; }
-    p { margin: 0.25rem 0; color: #9ca3af; }
-    a { color: #60a5fa; text-decoration: none; }
-    a:hover { text-decoration: underline; }
+    ${getWarmCss()}
   </style>
 </head>
 <body>
-  <main>
-    <h1>Invalid upload ID</h1>
-    <p>The requested upload could not be found.</p>
-    <p><a href="/">Back to Temporary Media Links</a></p>
-  </main>
+  <div class="page">
+    <header class="top-header">
+      <div class="brand">FadeDrop</div>
+    </header>
+    <main class="card card-narrow">
+      <h1>Invalid link</h1>
+      <p>This link is invalid or no longer available.</p>
+      <p class="back-link"><a href="/">Back to upload</a></p>
+    </main>
+  </div>
 </body>
 </html>`);
   }
@@ -473,22 +1450,22 @@ app.get('/dashboard/:id', (req, res) => {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Unauthorized • Temporary Media Links</title>
+  <title>Unauthorized • FadeDrop</title>
   <style>
-    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 1.75rem; background: #020617; color: #e5e7eb; }
-    main { max-width: 720px; margin: 0 auto; padding: 1.75rem 1.5rem 2rem; border-radius: 1.25rem; background: #020617; border: 1px solid rgba(127,29,29,0.9); box-shadow: 0 25px 50px -24px rgba(15,23,42,0.9); }
-    h1 { font-size: 1.5rem; margin: 0 0 0.4rem; color: #fecaca; }
-    p { margin: 0.25rem 0; color: #fca5a5; }
-    a { color: #60a5fa; text-decoration: none; }
-    a:hover { text-decoration: underline; }
+    ${getWarmCss()}
   </style>
 </head>
 <body>
-  <main>
-    <h1>Unauthorized</h1>
-    <p>Unauthorized  invalid dashboard key.</p>
-    <p><a href="/">Back to Temporary Media Links</a></p>
-  </main>
+  <div class="page">
+    <header class="top-header">
+      <div class="brand">FadeDrop</div>
+    </header>
+    <main class="card card-narrow">
+      <h1>Unauthorized</h1>
+      <p class="error">Unauthorized  invalid dashboard key.</p>
+      <p class="back-link"><a href="/">Back to upload</a></p>
+    </main>
+  </div>
 </body>
 </html>`);
   }
@@ -499,6 +1476,13 @@ app.get('/dashboard/:id', (req, res) => {
 
   const createdAt = record.createdAt;
   const expiresAt = record.expiration?.expiresAt || 'n/a';
+  const autoDeleteAt = (() => {
+    const direct = record.expiration?.autoDeleteAt;
+    if (direct) return direct;
+    const expiresMs = Date.parse(expiresAt);
+    if (!Number.isFinite(expiresMs)) return 'n/a';
+    return new Date(expiresMs + GRACE_PERIOD_MS).toISOString();
+  })();
 
   let timeRemainingLabel = 'n/a';
   if (Number.isFinite(expiresAtMs)) {
@@ -529,13 +1513,16 @@ app.get('/dashboard/:id', (req, res) => {
   const overViewLimit = Number.isInteger(maxViews) && maxViews > 0 && views >= maxViews;
   const countdownVisible = record.countdownVisible !== false;
 
+  const viewPath = `/v/${id}`;
+  const viewUrl = `${req.protocol}://${req.get('host')}${viewPath}`;
+
   const status = record.deleted
     ? 'Deleted'
     : isExpired
     ? 'Expired'
     : overViewLimit
-    ? 'Over view limit'
-    : 'Valid';
+    ? 'View limit reached'
+    : 'Active';
 
   const pwMessage = req.query.pwMessage;
   const pwError = req.query.pwError;
@@ -552,7 +1539,7 @@ app.get('/dashboard/:id', (req, res) => {
   if (pwMessage === 'updated') {
     feedbackHtml = '<p style="margin-top:0.5rem;font-size:0.85rem;color:#bbf7d0;">Password updated.</p>';
   } else if (pwMessage === 'removed') {
-    feedbackHtml = '<p style="margin-top:0.5rem;font-size:0.85rem;color:#bbf7d0;">Password removed. This upload is now accessible without a password.</p>';
+    feedbackHtml = '<p style="margin-top:0.5rem;font-size:0.85rem;color:#bbf7d0;">Password removed. This link is now accessible without a password.</p>';
   } else if (pwError === 'empty') {
     feedbackHtml = '<p style="margin-top:0.5rem;font-size:0.85rem;color:#fca5a5;">Password cannot be empty.</p>';
   } else if (pwError === 'current_required') {
@@ -560,9 +1547,9 @@ app.get('/dashboard/:id', (req, res) => {
   } else if (pwError === 'current_invalid') {
     feedbackHtml = '<p style="margin-top:0.5rem;font-size:0.85rem;color:#fca5a5;">Current password is incorrect.</p>';
   } else if (viewMessage === 'updated') {
-    feedbackHtml = '<p style="margin-top:0.5rem;font-size:0.85rem;color:#bbf7d0;">Max viewers updated.</p>';
+    feedbackHtml = '<p style="margin-top:0.5rem;font-size:0.85rem;color:#bbf7d0;">View limit updated.</p>';
   } else if (viewMessage === 'removed') {
-    feedbackHtml = '<p style="margin-top:0.5rem;font-size:0.85rem;color:#bbf7d0;">View limit removed. This upload now has no maximum viewers.</p>';
+    feedbackHtml = '<p style="margin-top:0.5rem;font-size:0.85rem;color:#bbf7d0;">View limit removed. This link now has no maximum view limit.</p>';
   } else if (viewError === 'invalid') {
     feedbackHtml = '<p style="margin-top:0.5rem;font-size:0.85rem;color:#fca5a5;">Please enter a positive whole number up to 100000 for max viewers.</p>';
   } else if (expMessage === 'extended') {
@@ -572,13 +1559,13 @@ app.get('/dashboard/:id', (req, res) => {
   } else if (expError === 'tooFar') {
     feedbackHtml = '<p style="margin-top:0.5rem;font-size:0.85rem;color:#fca5a5;">Expiration cannot be extended beyond 30 days from today.</p>';
   } else if (delMessage === 'deleted') {
-    feedbackHtml = '<p style="margin-top:0.5rem;font-size:0.85rem;color:#bbf7d0;">Upload deleted. Content is no longer available.</p>';
+    feedbackHtml = '<p style="margin-top:0.5rem;font-size:0.85rem;color:#bbf7d0;">Link deleted. Content is no longer available.</p>';
   } else if (delMessage === 'alreadyDeleted') {
-    feedbackHtml = '<p style="margin-top:0.5rem;font-size:0.85rem;color:#9ca3af;">This upload was already deleted.</p>';
+    feedbackHtml = '<p style="margin-top:0.5rem;font-size:0.85rem;color:#9ca3af;">This link was already deleted.</p>';
   } else if (delError === 'notfound') {
-    feedbackHtml = '<p style="margin-top:0.5rem;font-size:0.85rem;color:#fca5a5;">Upload not found for deletion.</p>';
+    feedbackHtml = '<p style="margin-top:0.5rem;font-size:0.85rem;color:#fca5a5;">Link not found for deletion.</p>';
   } else if (cdMessage === 'updated') {
-    feedbackHtml = '<p style="margin-top:0.5rem;font-size:0.85rem;color:#bbf7d0;">Viewer countdown setting updated.</p>';
+    feedbackHtml = '<p style="margin-top:0.5rem;font-size:0.85rem;color:#bbf7d0;">Expiration visibility updated.</p>';
   } else if (cdError === 'invalid') {
     feedbackHtml = '<p style="margin-top:0.5rem;font-size:0.85rem;color:#fca5a5;">Please choose a valid countdown visibility option.</p>';
   }
@@ -603,77 +1590,100 @@ app.get('/dashboard/:id', (req, res) => {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Upload dashboard • Temporary Media Links</title>
+  <title>Manage link • FadeDrop</title>
   <style>
-    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 1.75rem; background: #020617; color: #e5e7eb; }
-    main { max-width: 960px; margin: 0 auto; padding: 1.75rem 1.5rem 2rem; border-radius: 1.25rem; background: #020617; border: 1px solid rgba(55,65,81,0.9); box-shadow: 0 25px 50px -24px rgba(15,23,42,0.9); }
-    h1 { font-size: 1.7rem; margin: 0 0 0.75rem; }
-    p { margin: 0.25rem 0; color: #9ca3af; }
-    .layout { display: grid; gap: 1.25rem; margin-top: 1rem; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); }
-    .section { padding: 1rem 1rem 1.1rem; border-radius: 0.9rem; background: rgba(15,23,42,0.96); border: 1px solid rgba(55,65,81,0.9); }
-    .section h2 { margin: 0 0 0.4rem; font-size: 1rem; }
-    .section p { font-size: 0.85rem; }
+    ${getWarmCss()}
     dl.meta { margin: 0.35rem 0 0; display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.4fr); gap: 0.3rem 0.85rem; font-size: 0.85rem; }
-    dl.meta dt { color: #9ca3af; }
-    dl.meta dd { margin: 0; color: #e5e7eb; }
-    table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; font-size: 0.85rem; }
-    th, td { padding: 0.4rem 0.45rem; text-align: left; border-bottom: 1px solid rgba(31,41,55,0.9); }
-    th { color: #9ca3af; font-weight: 500; }
-    tbody tr:last-child td { border-bottom: none; }
-    .status-pill { display: inline-flex; align-items: center; padding: 0.15rem 0.6rem; border-radius: 999px; font-size: 0.75rem; border: 1px solid rgba(55,65,81,0.9); }
-    .status-valid { background: rgba(22,163,74,0.15); border-color: rgba(34,197,94,0.7); color: #bbf7d0; }
-    .status-expired { background: rgba(248,113,113,0.08); border-color: rgba(248,113,113,0.9); color: #fecaca; }
-    .status-deleted { background: rgba(148,163,184,0.1); color: #e5e7eb; }
-    .pill { display: inline-flex; align-items: center; padding: 0.15rem 0.55rem; border-radius: 999px; font-size: 0.75rem; border: 1px solid rgba(75,85,99,0.9); color: #e5e7eb; }
-    .back-link { margin-top: 1.25rem; font-size: 0.85rem; }
-    a { color: #60a5fa; text-decoration: none; }
-    a:hover { text-decoration: underline; }
+    dl.meta dt { color: var(--muted); }
+    dl.meta dd { margin: 0; color: var(--text); }
+    .link-copy { display: grid; grid-template-columns: 1fr auto; gap: 0.6rem; align-items: center; }
+    .link-copy input {
+      width: 100%;
+      padding: 0.5rem 0.6rem;
+      border-radius: 12px;
+      border: 1px solid rgba(60, 45, 30, 0.18);
+      background: rgba(255, 255, 255, 0.85);
+      color: var(--text);
+      font-size: 0.85rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .link-copy .btn-secondary { padding: 0.5rem 0.85rem; font-size: 0.85rem; min-height: 44px; white-space: nowrap; }
+    .copy-feedback { margin-top: 0.35rem; font-size: 0.8rem; color: var(--muted); }
     @media (max-width: 768px) {
       .layout { grid-template-columns: minmax(0, 1fr); }
+    }
+
+    @media (max-width: 480px) {
+      dl.meta { grid-template-columns: 1fr; gap: 0.2rem; }
+      dl.meta dt { margin-top: 0.55rem; }
+      dl.meta dt:first-child { margin-top: 0; }
+      dl.meta dd { word-break: break-word; }
+      .link-copy { grid-template-columns: 1fr; }
+      .link-copy .btn-secondary { width: 100%; }
+      .danger-btn { width: 100%; }
     }
   </style>
 </head>
 <body>
-  <main>
-    <h1>Upload dashboard</h1>
-    <p>Private dashboard for a single upload. Share this URL only with people you trust.</p>
-    ${feedbackHtml}
+  <div class="page">
+    <header class="top-header">
+      <div class="brand">FadeDrop</div>
+      <p class="tagline">Temporary media links for images, video, and audio.</p>
+    </header>
 
-    <div class="layout">
+    <main class="card">
+      <h1>Manage link</h1>
+      <p>Private controls for this temporary link. Share this page only with people you trust.</p>
+      ${feedbackHtml}
+
+      <div class="layout">
       <section class="section">
-        <h2>Metadata</h2>
+        <h2>Link details</h2>
         <dl class="meta">
-          <dt>Upload ID</dt>
+          <dt>Link</dt>
+          <dd>
+            <div class="link-copy">
+              <input id="public-link" type="text" value="${viewUrl}" readonly />
+              <button id="copy-public-link" class="btn-secondary" type="button">Copy</button>
+            </div>
+            <div id="copy-public-status" class="copy-feedback" aria-live="polite"></div>
+          </dd>
+          <dt>Link ID</dt>
           <dd>${record.id}</dd>
-          <dt>Type</dt>
+          <dt>Media type</dt>
           <dd>${record.mediaType}</dd>
-          <dt>Created at</dt>
+          <dt>Created</dt>
           <dd>${createdAt}</dd>
-          <dt>Expires at</dt>
+          <dt>Expires</dt>
           <dd>${expiresAt}</dd>
+          <dt>Auto-deletes at</dt>
+          <dd>${autoDeleteAt}</dd>
           <dt>Time remaining</dt>
           <dd>${timeRemainingLabel}</dd>
-          <dt>Status</dt>
+          <dt>Link status</dt>
           <dd>
             <span class="status-pill ${
-              status === 'Valid' ? 'status-valid' : status === 'Expired' ? 'status-expired' : 'status-deleted'
+              status === 'Active' ? 'status-valid' : status === 'Expired' ? 'status-expired' : 'status-deleted'
             }">${status}</span>
           </dd>
         </dl>
       </section>
 
       <section class="section">
-        <h2>Viewer controls</h2>
+        <h2>Link settings</h2>
         ${
           record.deleted
-            ? '<p style="font-size:0.85rem;color:#fca5a5;margin:0 0 0.6rem;">This upload has been deleted. Content is no longer available. Viewer, password, and expiration controls are disabled.</p>'
-            : '<div style="margin-bottom:0.85rem;padding:0.85rem 0.85rem 0.95rem;border-radius:0.75rem;border:1px solid rgba(55,65,81,0.9);background:rgba(15,23,42,0.9);">\n' +
+            ? '<p style="font-size:0.85rem;color:#fca5a5;margin:0 0 0.6rem;">This link has been deleted. Content is no longer available. Settings are disabled.</p>'
+            : '<div style="margin-bottom:0.85rem;padding:0.85rem 0.85rem 0.95rem;border-radius:0.75rem;border:1px solid rgba(60,45,30,0.12);background:rgba(255,255,255,0.6);">\n' +
               '  <h3 style="margin:0 0 0.4rem;font-size:0.9rem;">Expiration</h3>\n' +
-              '  <p style="margin:0 0 0.35rem;font-size:0.8rem;color:#9ca3af;">Current expiration controls how long this link stays live. You can only extend it, up to 30 days from now.</p>\n' +
-              '  <p style="margin:0 0 0.3rem;font-size:0.8rem;">Current expiration: <span style="color:#e5e7eb;">' +
+              '  <p style="margin:0 0 0.35rem;font-size:0.8rem;color:var(--muted);">This link will disappear automatically after expiration. You can extend it up to 30 days from now.</p>\n' +
+              '  <p style="margin:0 0 0.3rem;font-size:0.8rem;">Expires: <span style="color:var(--text);">' +
               expiresAt +
               '</span></p>\n' +
-              '  <p style="margin:0 0 0.5rem;font-size:0.8rem;">Time remaining: <span style="color:#e5e7eb;">' +
+              '  <p style="margin:0 0 0.5rem;font-size:0.8rem;">Time remaining: <span style="color:var(--text);">' +
               timeRemainingLabel +
               '</span></p>\n' +
               '  <form method="post" action="/dashboard/' +
@@ -681,11 +1691,11 @@ app.get('/dashboard/:id', (req, res) => {
               '/expiration?key=' +
               encodeURIComponent(key) +
               '" style="display:grid;gap:0.4rem;max-width:260px;margin-top:0.35rem;">\n' +
-              '    <label for="dashboard-extend-expiration" style="font-size:0.8rem;color:#e5e7eb;">Add expiration time</label>\n' +
+              '    <label for="dashboard-extend-expiration" style="font-size:0.8rem;color:var(--text);font-weight:650;">Extend expiration</label>\n' +
               '    <select\n' +
               '      id="dashboard-extend-expiration"\n' +
               '      name="extendBy"\n' +
-              '      style="width:100%;padding:0.45rem 0.55rem;border-radius:0.55rem;border:1px solid rgba(55,65,81,0.9);background:rgba(15,23,42,0.96);color:#e5e7eb;font-size:0.85rem;"\n' +
+              '      style="width:100%;padding:0.45rem 0.55rem;border-radius:0.55rem;border:1px solid rgba(60,45,30,0.18);background:rgba(255,255,255,0.85);color:var(--text);font-size:0.85rem;"\n' +
               '    >\n' +
               '      <option value="3600000">+1 hour</option>\n' +
               '      <option value="7200000">+2 hours</option>\n' +
@@ -696,7 +1706,7 @@ app.get('/dashboard/:id', (req, res) => {
               '      <option value="604800000">+7 days</option>\n' +
               '      <option value="2592000000">+30 days</option>\n' +
               '    </select>\n' +
-              '    <button type="submit" style="margin-top:0.1rem;padding:0.45rem 1rem;border-radius:999px;border:none;background:linear-gradient(to right,#0ea5e9,#22c55e);color:#fff;font-size:0.8rem;font-weight:600;cursor:pointer;justify-self:flex-start;">Extend expiration</button>\n' +
+              '    <button type="submit" style="margin-top:0.1rem;padding:0.45rem 1rem;border-radius:999px;border:1px solid rgba(47,107,79,0.25);background:var(--accent);color:#fffaf2;font-size:0.8rem;font-weight:650;cursor:pointer;justify-self:flex-start;">Extend expiration</button>\n' +
               '  </form>\n' +
               '</div>'
         }
@@ -705,22 +1715,22 @@ app.get('/dashboard/:id', (req, res) => {
         <p style="margin-top:0.5rem; font-size:0.85rem;">Views: ${views}</p>
         ${
           overViewLimit && !record.deleted
-            ? '<p style="margin-top:0.15rem;font-size:0.8rem;color:#fca5a5;">This upload has reached its max viewers. New visitors will see a view-limit message until you increase or remove the limit.</p>'
+            ? '<p style="margin-top:0.15rem;font-size:0.8rem;color:#fca5a5;">This link has reached its view limit. New visitors will see a view-limit message until you increase or remove the limit.</p>'
             : ''
         }
         ${
           record.deleted
             ? ''
-            : '<div style="margin-top:0.85rem;padding:0.85rem 0.85rem 0.95rem;border-radius:0.75rem;border:1px solid rgba(55,65,81,0.9);background:rgba(15,23,42,0.9);">\n' +
+            : '<div style="margin-top:0.85rem;padding:0.85rem 0.85rem 0.95rem;border-radius:0.75rem;border:1px solid rgba(60,45,30,0.12);background:rgba(255,255,255,0.6);">\n' +
               '  <h3 style="margin:0 0 0.4rem;font-size:0.9rem;">View limit</h3>\n' +
-              '  <p style="margin:0 0 0.5rem;font-size:0.8rem;color:#9ca3af;">Optionally cap how many times this link can be viewed. Leave blank for no limit.</p>\n' +
+              '  <p style="margin:0 0 0.5rem;font-size:0.8rem;color:var(--muted);">Optionally limit how many times this link can be opened.</p>\n' +
               '  <form method="post" action="/dashboard/' +
               record.id +
               '/views?key=' +
               encodeURIComponent(key) +
               '" style="display:grid;gap:0.35rem;max-width:260px;margin-bottom:0.8rem;">\n' +
               '    <input type="hidden" name="mode" value="set" />\n' +
-              '    <label for="dashboard-max-views" style="font-size:0.8rem;color:#e5e7eb;">Max viewers</label>\n' +
+              '    <label for="dashboard-max-views" style="font-size:0.8rem;color:var(--text);font-weight:650;">View limit</label>\n' +
               '    <input\n' +
               '      id="dashboard-max-views"\n' +
               '      name="maxViews"\n' +
@@ -731,11 +1741,9 @@ app.get('/dashboard/:id', (req, res) => {
               '      value="' +
               (maxViews && maxViews > 0 ? maxViews : '') +
               '"\n' +
-              '      style="width:100%;padding:0.45rem 0.55rem;border-radius:0.55rem;border:1px solid rgba(55,65,81,0.9);background:rgba(15,23,42,0.96);color:#e5e7eb;font-size:0.85rem;"\n' +
+              '      style="width:100%;padding:0.45rem 0.55rem;border-radius:0.55rem;border:1px solid rgba(60,45,30,0.18);background:rgba(255,255,255,0.85);color:var(--text);font-size:0.85rem;"\n' +
               '    />\n' +
-              '    <button type="submit" style="margin-top:0.1rem;padding:0.45rem 1rem;border-radius:999px;border:none;background:linear-gradient(to right,#0ea5e9,#22c55e);color:#fff;font-size:0.8rem;font-weight:600;cursor:pointer;justify-self:flex-start;">' +
-              (maxViews && maxViews > 0 ? 'Change max viewers' : 'Set max viewers') +
-              '</button>\n' +
+              '    <button type="submit" style="margin-top:0.1rem;padding:0.45rem 1rem;border-radius:999px;border:1px solid rgba(47,107,79,0.25);background:var(--accent);color:#fffaf2;font-size:0.8rem;font-weight:650;cursor:pointer;justify-self:flex-start;">Save view limit</button>\n' +
               '  </form>\n' +
               (maxViews && maxViews > 0
                 ? '  <form method="post" action="/dashboard/' +
@@ -744,7 +1752,7 @@ app.get('/dashboard/:id', (req, res) => {
                   encodeURIComponent(key) +
                   '" style="margin:0;">\n' +
                   '    <input type="hidden" name="mode" value="remove" />\n' +
-                  '    <button type="submit" style="padding:0.35rem 0.9rem;border-radius:999px;border:1px solid rgba(148,163,184,0.7);background:transparent;color:#e5e7eb;font-size:0.75rem;cursor:pointer;">Remove view limit</button>\n' +
+                  '    <button type="submit" style="padding:0.35rem 0.9rem;border-radius:999px;border:1px solid rgba(60,45,30,0.2);background:transparent;color:var(--text);font-size:0.75rem;cursor:pointer;">Remove view limit</button>\n' +
                   '  </form>\n'
                 : '') +
               '</div>'
@@ -753,20 +1761,20 @@ app.get('/dashboard/:id', (req, res) => {
         ${
           record.deleted
             ? ''
-            : '<div style="margin-top:0.85rem;padding:0.85rem 0.85rem 0.95rem;border-radius:0.75rem;border:1px solid rgba(55,65,81,0.9);background:rgba(15,23,42,0.9);">\n' +
+            : '<div style="margin-top:0.85rem;padding:0.85rem 0.85rem 0.95rem;border-radius:0.75rem;border:1px solid rgba(60,45,30,0.12);background:rgba(255,255,255,0.6);">\n' +
               '  <h3 style="margin:0 0 0.4rem;font-size:0.9rem;">Password protection</h3>\n' +
               '  <p style="margin:0 0 0.4rem;font-size:0.8rem;display:flex;align-items:center;gap:0.35rem;">\n' +
               '    <span class="pill" style="border-color:' +
               (record.password ? 'rgba(34,197,94,0.7)' : 'rgba(148,163,184,0.8)') +
               ';background:' +
-              (record.password ? 'rgba(22,163,74,0.15)' : 'rgba(31,41,55,0.8)') +
+              (record.password ? 'rgba(22,163,74,0.15)' : 'rgba(255,255,255,0.7)') +
               ';"><span style="font-size:0.8rem;">' +
               (record.password ? '🔐' : '🔓') +
               '</span> ' +
               passwordStatus +
               '</span>\n' +
               '  </p>\n' +
-              '  <p style="margin:0.2rem 0 0.6rem;font-size:0.8rem;color:#9ca3af;">Use these controls to add, change, or remove the password for the public view link.</p>\n' +
+              '  <p style="margin:0.2rem 0 0.6rem;font-size:0.8rem;color:var(--muted);">Use these controls to add, change, or remove the password for the public view link.</p>\n' +
               '  <form method="post" action="/dashboard/' +
               record.id +
               '/password?key=' +
@@ -776,21 +1784,21 @@ app.get('/dashboard/:id', (req, res) => {
               (record.password ? 'change' : 'set') +
               '" />\n' +
               (record.password
-                ? '    <label for="dashboard-current-password" style="font-size:0.8rem;color:#e5e7eb;">Current password</label>\n' +
-                  '    <input id="dashboard-current-password" name="currentPassword" type="password" autocomplete="current-password" style="width:100%;padding:0.45rem 0.55rem;border-radius:0.55rem;border:1px solid rgba(55,65,81,0.9);background:rgba(15,23,42,0.96);color:#e5e7eb;font-size:0.85rem;" />\n'
+                ? '    <label for="dashboard-current-password" style="font-size:0.8rem;color:var(--text);font-weight:650;">Current password</label>\n' +
+                  '    <input id="dashboard-current-password" name="currentPassword" type="password" autocomplete="current-password" style="width:100%;padding:0.45rem 0.55rem;border-radius:0.55rem;border:1px solid rgba(60,45,30,0.18);background:rgba(255,255,255,0.85);color:var(--text);font-size:0.85rem;" />\n'
                 : '') +
-              '    <label for="dashboard-password" style="font-size:0.8rem;color:#e5e7eb;">' +
-              (record.password ? 'New password' : 'Add password') +
+              '    <label for="dashboard-password" style="font-size:0.8rem;color:var(--text);font-weight:650;">' +
+              (record.password ? 'New password' : 'Password') +
               '</label>\n' +
               '    <input\n' +
               '      id="dashboard-password"\n' +
               '      name="password"\n' +
               '      type="password"\n' +
               '      autocomplete="new-password"\n' +
-              '      style="width:100%;padding:0.45rem 0.55rem;border-radius:0.55rem;border:1px solid rgba(55,65,81,0.9);background:rgba(15,23,42,0.96);color:#e5e7eb;font-size:0.85rem;"\n' +
+              '      style="width:100%;padding:0.45rem 0.55rem;border-radius:0.55rem;border:1px solid rgba(60,45,30,0.18);background:rgba(255,255,255,0.85);color:var(--text);font-size:0.85rem;"\n' +
               '    />\n' +
-              '    <button type="submit" style="margin-top:0.1rem;padding:0.45rem 1rem;border-radius:999px;border:none;background:linear-gradient(to right,#4f46e5,#06b6d4);color:#fff;font-size:0.8rem;font-weight:600;cursor:pointer;justify-self:flex-start;">' +
-              (record.password ? 'Change password' : 'Set password') +
+              '    <button type="submit" style="margin-top:0.1rem;padding:0.45rem 1rem;border-radius:999px;border:1px solid rgba(47,107,79,0.25);background:var(--accent);color:#fffaf2;font-size:0.8rem;font-weight:650;cursor:pointer;justify-self:flex-start;">' +
+              (record.password ? 'Change password' : 'Save password') +
               '</button>\n' +
               '  </form>\n' +
               (record.password
@@ -800,9 +1808,9 @@ app.get('/dashboard/:id', (req, res) => {
                   encodeURIComponent(key) +
                   '" style="margin-top:0.75rem;display:grid;gap:0.35rem;max-width:260px;">\n' +
                   '    <input type="hidden" name="mode" value="remove" />\n' +
-                  '    <label for="dashboard-remove-current" style="font-size:0.8rem;color:#e5e7eb;">Current password</label>\n' +
-                  '    <input id="dashboard-remove-current" name="currentPassword" type="password" autocomplete="current-password" style="width:100%;padding:0.45rem 0.55rem;border-radius:0.55rem;border:1px solid rgba(55,65,81,0.9);background:rgba(15,23,42,0.96);color:#e5e7eb;font-size:0.85rem;" />\n' +
-                  '    <button type="submit" style="padding:0.35rem 0.9rem;border-radius:999px;border:1px solid rgba(248,113,113,0.7);background:transparent;color:#fecaca;font-size:0.75rem;cursor:pointer;justify-self:flex-start;">Remove password</button>\n' +
+                  '    <label for="dashboard-remove-current" style="font-size:0.8rem;color:var(--text);font-weight:650;">Current password</label>\n' +
+                  '    <input id="dashboard-remove-current" name="currentPassword" type="password" autocomplete="current-password" style="width:100%;padding:0.45rem 0.55rem;border-radius:0.55rem;border:1px solid rgba(60,45,30,0.18);background:rgba(255,255,255,0.85);color:var(--text);font-size:0.85rem;" />\n' +
+                  '    <button type="submit" style="padding:0.35rem 0.9rem;border-radius:999px;border:1px solid rgba(248,113,113,0.85);background:transparent;color:rgba(134,57,57,0.95);font-size:0.75rem;cursor:pointer;justify-self:flex-start;">Remove password</button>\n' +
                   '  </form>\n'
                 : '') +
               '</div>'
@@ -811,27 +1819,27 @@ app.get('/dashboard/:id', (req, res) => {
         ${
           record.deleted
             ? ''
-            : '<div style="margin-top:0.85rem;padding:0.85rem 0.85rem 0.95rem;border-radius:0.75rem;border:1px solid rgba(55,65,81,0.9);background:rgba(15,23,42,0.9);">\n' +
-              '  <h3 style="margin:0 0 0.4rem;font-size:0.9rem;">Viewer expiration countdown</h3>\n' +
-              '  <p style="margin:0 0 0.5rem;font-size:0.8rem;color:#9ca3af;">You can choose whether viewers see how much time is left before this content expires.</p>\n' +
+            : '<div style="margin-top:0.85rem;padding:0.85rem 0.85rem 0.95rem;border-radius:0.75rem;border:1px solid rgba(60,45,30,0.12);background:rgba(255,255,255,0.6);">\n' +
+              '  <h3 style="margin:0 0 0.4rem;font-size:0.9rem;">Expiration visibility</h3>\n' +
+              '  <p style="margin:0 0 0.5rem;font-size:0.8rem;color:var(--muted);">Choose whether viewers can see the expiration time.</p>\n' +
               '  <form method="post" action="/dashboard/' +
               record.id +
               '/countdown?key=' +
               encodeURIComponent(key) +
               '" style="display:grid;gap:0.35rem;max-width:260px;">\n' +
-              '    <label style="font-size:0.8rem;display:flex;align-items:center;gap:0.4rem;">\n' +
+              '    <label style="font-size:0.8rem;display:flex;align-items:center;gap:0.4rem;color:var(--text);">\n' +
               '      <input type="radio" name="countdownMode" value="show" ' +
               (countdownVisible ? 'checked' : '') +
               ' />\n' +
-              '      <span>Show expiration countdown to viewers</span>\n' +
+              '      <span>Show expiration time to viewers</span>\n' +
               '    </label>\n' +
-              '    <label style="font-size:0.8rem;display:flex;align-items:center;gap:0.4rem;">\n' +
+              '    <label style="font-size:0.8rem;display:flex;align-items:center;gap:0.4rem;color:var(--text);">\n' +
               '      <input type="radio" name="countdownMode" value="hide" ' +
               (countdownVisible ? '' : 'checked') +
               ' />\n' +
-              '      <span>Do not show expiration countdown to viewers</span>\n' +
+              '      <span>Hide expiration time from viewers</span>\n' +
               '    </label>\n' +
-              '    <button type="submit" style="margin-top:0.1rem;padding:0.45rem 1rem;border-radius:999px;border:none;background:linear-gradient(to right,#0ea5e9,#22c55e);color:#fff;font-size:0.8rem;font-weight:600;cursor:pointer;justify-self:flex-start;">Save setting</button>\n' +
+              '    <button type="submit" style="margin-top:0.1rem;padding:0.45rem 1rem;border-radius:999px;border:1px solid rgba(47,107,79,0.25);background:var(--accent);color:#fffaf2;font-size:0.8rem;font-weight:650;cursor:pointer;justify-self:flex-start;">Save changes</button>\n' +
               '  </form>\n' +
               '</div>'
         }
@@ -840,7 +1848,7 @@ app.get('/dashboard/:id', (req, res) => {
 
     <section class="section" style="margin-top:1.25rem;">
       <h2>Files</h2>
-      <p>These are the files attached to this upload. File paths and internal identifiers are hidden.</p>
+      <p>These are the files attached to this link. File paths and internal identifiers are hidden.</p>
       <table>
         <thead>
           <tr>
@@ -857,713 +1865,99 @@ app.get('/dashboard/:id', (req, res) => {
     </section>
 
     <section class="section" style="margin-top:1.25rem;">
-      <h2>Content management</h2>
-      <p style="font-size:0.85rem;color:#9ca3af;">Use this section to permanently delete this upload. This cannot be undone.</p>
+      <h2>Delete link</h2>
+      <p style="font-size:0.85rem;color:#9ca3af;">Use this section to permanently delete this link. This cannot be undone.</p>
       ${
         record.deleted
-          ? '<p style="margin-top:0.5rem;font-size:0.85rem;color:#fca5a5;">This upload has been deleted. All associated media was removed, and the view link now shows a deleted message.</p>'
+          ? '<p style="margin-top:0.5rem;font-size:0.85rem;color:#fca5a5;">This link has been deleted. All associated media was removed, and the view link now shows a deleted message.</p>'
           : '<form method="post" action="/dashboard/' +
             record.id +
             '/delete?key=' +
             encodeURIComponent(key) +
-            '" onsubmit="return confirm(\'Are you sure you want to delete this upload? This action cannot be undone.\');" style="margin-top:0.75rem;">\n' +
-            '  <button type="submit" style="padding:0.55rem 1.1rem;border-radius:999px;border:1px solid rgba(248,113,113,0.9);background:transparent;color:#fecaca;font-size:0.85rem;cursor:pointer;">Delete this upload</button>\n' +
+            '" onsubmit="return confirm(\'Are you sure you want to delete this link? This action cannot be undone.\');" style="margin-top:0.75rem;">\n' +
+            '  <button type="submit" class="danger-btn" style="padding:0.55rem 1.1rem;border-radius:999px;border:1px solid rgba(248,113,113,0.9);background:transparent;color:#fecaca;font-size:0.85rem;cursor:pointer;">Delete link</button>\n' +
             '</form>'
       }
     </section>
 
-    <p class="back-link"><a href="/">Back to Temporary Media Links</a></p>
+    <p class="back-link"><a href="/">Back to upload</a></p>
   </main>
-</body>
-</html>`);
-});
+</div>
 
-app.get('/upload', (req, res) => {
-  res.status(200).send(`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Upload • Temporary Media Links</title>
-  <style>
-    :root {
-      color-scheme: dark;
+<script>
+  const publicLinkInput = document.getElementById('public-link');
+  const copyPublicBtn = document.getElementById('copy-public-link');
+  const copyPublicStatus = document.getElementById('copy-public-status');
+
+  function setStatus(text) {
+    if (copyPublicStatus) copyPublicStatus.textContent = text;
+  }
+
+  async function copyText(value) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(value);
+      return;
     }
-    * { box-sizing: border-box; }
-    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 1.5rem; background: #020617; color: #e5e7eb; }
-    main { max-width: 720px; margin: 0 auto; padding: 1.75rem 1.5rem 2rem; border-radius: 1.25rem; background: radial-gradient(circle at top left, rgba(56,189,248,0.15), transparent 55%), radial-gradient(circle at top right, rgba(129,140,248,0.2), transparent 55%), #020617; border: 1px solid rgba(148,163,184,0.3); box-shadow: 0 25px 50px -24px rgba(15,23,42,0.9); }
-    header { margin-bottom: 1.5rem; }
-    h1 { font-size: 1.6rem; margin: 0 0 0.25rem; }
-    .subtitle { margin: 0; color: #9ca3af; font-size: 0.95rem; }
-    form { display: grid; gap: 1.25rem; margin-top: 1rem; }
-    .field-group { padding: 1rem 1rem 1.1rem; border-radius: 0.9rem; background: rgba(15,23,42,0.96); border: 1px solid rgba(55,65,81,0.9); }
-    .field-label { font-size: 0.9rem; font-weight: 600; color: #e5e7eb; margin-bottom: 0.4rem; display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
-    .field-hint { font-size: 0.8rem; color: #9ca3af; }
-    .required-pill, .optional-pill { font-size: 0.7rem; padding: 0.1rem 0.45rem; border-radius: 999px; border: 1px solid rgba(148,163,184,0.65); color: #e5e7eb; opacity: 0.9; }
-    .optional-pill { opacity: 0.75; }
-    .media-options { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.25rem; }
-    .media-option { position: relative; }
-    .media-option input { position: absolute; opacity: 0; inset: 0; cursor: pointer; }
-    .media-chip { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.4rem 0.75rem; border-radius: 999px; border: 1px solid rgba(55,65,81,0.9); background: rgba(15,23,42,0.9); font-size: 0.85rem; color: #e5e7eb; }
-    .media-chip span.icon { font-size: 0.9rem; opacity: 0.9; }
-    .media-option input:checked + .media-chip { border-color: #4f46e5; box-shadow: 0 0 0 1px rgba(79,70,229,0.7), 0 10px 25px -10px rgba(79,70,229,0.8); background: radial-gradient(circle at top left, rgba(79,70,229,0.45), rgba(15,23,42,0.95)); }
-    .file-input-group { display: grid; gap: 0.5rem; margin-top: 0.5rem; }
-    input[type="file"] { font-size: 0.85rem; color: #e5e7eb; }
-    .selected-files { list-style: none; padding: 0; margin: 0.4rem 0 0; display: grid; gap: 0.3rem; font-size: 0.8rem; }
-    .selected-files li { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; padding: 0.25rem 0.4rem; border-radius: 0.4rem; background: rgba(15,23,42,0.9); border: 1px solid rgba(31,41,55,0.9); }
-    .selected-files span.name { flex: 1 1 auto; word-break: break-all; color: #e5e7eb; }
-    .selected-files span.meta { flex-shrink: 0; color: #9ca3af; }
-    .selected-files button.remove { flex-shrink: 0; border: none; background: transparent; color: #fca5a5; font-size: 0.75rem; cursor: pointer; padding: 0.15rem 0.35rem; border-radius: 0.35rem; }
-    .selected-files button.remove:hover { background: rgba(127,29,29,0.4); }
-    input[type="number"], input[type="password"], select { width: 100%; padding: 0.5rem 0.6rem; border-radius: 0.55rem; border: 1px solid rgba(55,65,81,0.9); background: rgba(15,23,42,0.96); color: #e5e7eb; font-size: 0.9rem; }
-    input[type="number"]:focus, input[type="password"]:focus, select:focus { outline: none; border-color: #6366f1; box-shadow: 0 0 0 1px rgba(99,102,241,0.8); }
-    .expiration-row { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-top: 0.35rem; align-items: center; }
-    .expiration-row > * { flex: 1 1 120px; }
-    .expiration-meta { font-size: 0.8rem; color: #9ca3af; margin-top: 0.4rem; }
-    .actions { display: flex; flex-wrap: wrap; gap: 0.75rem; justify-content: flex-end; margin-top: 0.5rem; }
-    .btn-primary { padding: 0.7rem 1.4rem; border-radius: 999px; border: none; background: linear-gradient(to right, #4f46e5, #06b6d4); color: white; font-weight: 600; font-size: 0.95rem; cursor: pointer; display: inline-flex; align-items: center; gap: 0.35rem; box-shadow: 0 16px 35px -18px rgba(15,23,42,0.9); }
-    .btn-primary:hover { filter: brightness(1.05); }
-    .btn-secondary { padding: 0.6rem 1rem; border-radius: 999px; border: 1px solid rgba(148,163,184,0.6); background: transparent; color: #e5e7eb; font-size: 0.85rem; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 0.3rem; }
-    .btn-secondary:hover { background: rgba(15,23,42,0.9); }
-    @media (max-width: 640px) {
-      main { padding: 1.25rem 1rem 1.5rem; }
-      h1 { font-size: 1.35rem; }
+    if (publicLinkInput) {
+      publicLinkInput.focus();
+      publicLinkInput.select();
+      document.execCommand('copy');
     }
-  </style>
-</head>
-<body>
-  <main>
-    <header>
-      <p style="font-size:0.8rem;color:#9ca3af;margin:0 0 0.35rem;">Temporary Media Links</p>
-      <h1>Create a temporary media link</h1>
-      <p class="subtitle">Choose what you're sharing, how long it should live, and optionally protect it with a password.</p>
-    </header>
+  }
 
-    <form action="/upload" method="post" enctype="multipart/form-data">
-      <section class="field-group">
-        <div class="field-label">
-          <span>Media type</span>
-          <span class="required-pill">Required</span>
-        </div>
-        <p class="field-hint">Select what kind of content you're uploading for this link.</p>
-        <div class="media-options" aria-label="Media type">
-          <label class="media-option">
-            <input type="radio" name="mediaType" value="images" checked />
-            <span class="media-chip"><span class="icon">🖼️</span><span>Images</span></span>
-          </label>
-          <label class="media-option">
-            <input type="radio" name="mediaType" value="video" />
-            <span class="media-chip"><span class="icon">📹</span><span>Video</span></span>
-          </label>
-          <label class="media-option">
-            <input type="radio" name="mediaType" value="audio" />
-            <span class="media-chip"><span class="icon">🎧</span><span>Audio</span></span>
-          </label>
-        </div>
-      </section>
+  if (publicLinkInput) {
+    publicLinkInput.addEventListener('click', () => publicLinkInput.select());
+  }
 
-      <section class="field-group">
-        <div class="field-label">
-          <span>Files</span>
-          <span class="required-pill">Required</span>
-        </div>
-        <div class="file-input-group" id="file-inputs">
-          <div data-media="images">
-            <p class="field-hint">Upload up to 10 images (up to ~15MB each). Limits will be enforced in a later step.</p>
-            <input type="file" id="images-input" accept="image/*" multiple />
-            <input type="file" id="images-hidden" name="images" accept="image/*" multiple style="display:none;" />
-            <ul class="selected-files" id="images-list"></ul>
-            <p class="field-hint" id="images-warning" style="display:none;color:#fca5a5;">You can upload up to 10 images per upload.</p>
-          </div>
-          <div data-media="video" style="display:none;">
-            <p class="field-hint">Upload a single video file for this link.</p>
-            <input type="file" id="video-input" accept="video/*" />
-            <input type="file" id="video-hidden" name="video" accept="video/*" style="display:none;" />
-            <ul class="selected-files" id="video-list"></ul>
-          </div>
-          <div data-media="audio" style="display:none;">
-            <p class="field-hint">Upload up to 2 audio files for this link.</p>
-            <input type="file" id="audio-input" accept="audio/*" multiple />
-            <input type="file" id="audio-hidden" name="audio" accept="audio/*" multiple style="display:none;" />
-            <ul class="selected-files" id="audio-list"></ul>
-            <p class="field-hint" id="audio-warning" style="display:none;color:#fca5a5;">You can upload up to 2 audio files per upload.</p>
-          </div>
-        </div>
-      </section>
-
-      <section class="field-group">
-        <div class="field-label">
-          <span>Expiration</span>
-          <span class="required-pill">Required</span>
-        </div>
-        <p class="field-hint">Choose how long this link should stay live. Actual limits (1 hour  30 days) will be enforced in a later step.</p>
-        <div class="expiration-row">
-          <input type="number" id="expiresValue" name="expiresValue" min="1" max="30" value="24" />
-          <select id="expiresUnit" name="expiresUnit">
-            <option value="hours" selected>Hours</option>
-            <option value="days">Days</option>
-          </select>
-        </div>
-        <p class="expiration-meta">Valid for at least 1 hour and up to 30 days.</p>
-        ${
-          ENABLE_TEST_EXPIRATION_SHORTCUT
-            ? '<p class="expiration-meta" style="margin-top:0.3rem;color:#a5b4fc;">Test shortcut enabled: use the button below to set a 1-minute expiration (dev only).</p>\n' +
-              '<button type="button" id="test-expiration-minute" style="margin-top:0.35rem;padding:0.25rem 0.7rem;border-radius:999px;border:1px solid rgba(129,140,248,0.8);background:transparent;color:#c7d2fe;font-size:0.75rem;cursor:pointer;">1 minute (test only)</button>'
-            : ''
-        }
-      </section>
-
-      <section class="field-group">
-        <div class="field-label">
-          <span>Password</span>
-          <span class="optional-pill">Optional</span>
-        </div>
-        <p class="field-hint">Add a password to protect access to this link. You will share it alongside the URL.</p>
-        <input type="password" name="password" autocomplete="new-password" placeholder="Leave blank for no password" />
-      </section>
-
-      <div class="actions">
-        <a class="btn-secondary" href="/">
-          <span>Back to status</span>
-        </a>
-        <button type="submit" class="btn-primary">
-          <span>Create link</span>
-        </button>
-      </div>
-    </form>
-  </main>
-
-  <script>
-    const mediaInputs = document.querySelectorAll('input[name="mediaType"]');
-    const fileGroups = document.querySelectorAll('#file-inputs [data-media]');
-
-    const visibleInputs = {
-      images: document.getElementById('images-input'),
-      video: document.getElementById('video-input'),
-      audio: document.getElementById('audio-input'),
-    };
-
-    const hiddenInputs = {
-      images: document.getElementById('images-hidden'),
-      video: document.getElementById('video-hidden'),
-      audio: document.getElementById('audio-hidden'),
-    };
-
-    const lists = {
-      images: document.getElementById('images-list'),
-      video: document.getElementById('video-list'),
-      audio: document.getElementById('audio-list'),
-    };
-
-    const warnings = {
-      images: document.getElementById('images-warning'),
-      audio: document.getElementById('audio-warning'),
-    };
-
-    const state = {
-      images: [],
-      video: [],
-      audio: [],
-      max: {
-        images: 10,
-        video: 1,
-        audio: 2,
-      },
-    };
-
-    function updateFileInputs() {
-      const selected = document.querySelector('input[name="mediaType"]:checked');
-      if (!selected) return;
-      const value = selected.value;
-      fileGroups.forEach((group) => {
-        const isActive = group.getAttribute('data-media') === value;
-        group.style.display = isActive ? '' : 'none';
-      });
-    }
-
-    function syncHiddenInput(type) {
-      const hidden = hiddenInputs[type];
-      if (!hidden) return;
-      const dt = new DataTransfer();
-      (state[type] || []).forEach((file) => dt.items.add(file));
-      hidden.files = dt.files;
-    }
-
-    function renderList(type) {
-      const list = lists[type];
-      if (!list) return;
-      const files = state[type] || [];
-      list.innerHTML = '';
-      files.forEach((file, index) => {
-        const li = document.createElement('li');
-        const nameSpan = document.createElement('span');
-        nameSpan.className = 'name';
-        nameSpan.textContent = file.name || '(unnamed file)';
-        const metaSpan = document.createElement('span');
-        metaSpan.className = 'meta';
-        metaSpan.textContent = (file.size / (1024 * 1024)).toFixed(2) + ' MB';
-        const removeBtn = document.createElement('button');
-        removeBtn.type = 'button';
-        removeBtn.className = 'remove';
-        removeBtn.textContent = 'Remove';
-        removeBtn.addEventListener('click', () => {
-          state[type].splice(index, 1);
-          syncHiddenInput(type);
-          renderList(type);
-          if (warnings[type]) warnings[type].style.display = 'none';
-        });
-        li.appendChild(nameSpan);
-        li.appendChild(metaSpan);
-        li.appendChild(removeBtn);
-        list.appendChild(li);
-      });
-    }
-
-    function handleFilesAdded(type, fileList) {
-      const files = Array.from(fileList || []);
-      if (!files.length) return;
-      const max = state.max[type];
-      if (!max) return;
-
-      if (type === 'video') {
-        // Single-file: replace previous selection (no effective duplicates)
-        state.video = files.length ? [files[0]] : [];
-        syncHiddenInput('video');
-        renderList('video');
-        return;
+  if (copyPublicBtn && publicLinkInput) {
+    copyPublicBtn.addEventListener('click', async () => {
+      try {
+        await copyText(publicLinkInput.value);
+        setStatus('Copied');
+        copyPublicBtn.textContent = 'Copied';
+        setTimeout(() => {
+          copyPublicBtn.textContent = 'Copy';
+          setStatus('');
+        }, 1400);
+      } catch (e) {
+        setStatus('Copy failed. You can manually select the link and copy it.');
       }
-
-      const current = state[type] || [];
-      let addedAny = false;
-      files.forEach((file) => {
-        const isDuplicate = current.some((existing) => {
-          return (
-            existing.name === file.name &&
-            existing.size === file.size &&
-            existing.lastModified === file.lastModified
-          );
-        });
-        if (isDuplicate) {
-          return;
-        }
-        if (current.length >= max) {
-          return;
-        }
-        current.push(file);
-        addedAny = true;
-      });
-
-      state[type] = current;
-      syncHiddenInput(type);
-      renderList(type);
-
-      if (!addedAny || state[type].length >= max) {
-        if (warnings[type]) warnings[type].style.display = 'block';
-      } else if (warnings[type]) {
-        warnings[type].style.display = 'none';
-      }
-    }
-
-    mediaInputs.forEach((input) => {
-      input.addEventListener('change', () => {
-        updateFileInputs();
-      });
     });
-
-    if (visibleInputs.images) {
-      visibleInputs.images.addEventListener('change', (event) => {
-        handleFilesAdded('images', event.target.files);
-        event.target.value = '';
-      });
-    }
-
-    if (visibleInputs.audio) {
-      visibleInputs.audio.addEventListener('change', (event) => {
-        handleFilesAdded('audio', event.target.files);
-        event.target.value = '';
-      });
-    }
-
-    if (visibleInputs.video) {
-      visibleInputs.video.addEventListener('change', (event) => {
-        handleFilesAdded('video', event.target.files);
-        event.target.value = '';
-      });
-    }
-
-    const testExpirationButton = document.getElementById('test-expiration-minute');
-    if (testExpirationButton) {
-      testExpirationButton.addEventListener('click', () => {
-        const expiresValueInput = document.getElementById('expiresValue');
-        const expiresUnitSelect = document.getElementById('expiresUnit');
-        if (expiresValueInput && expiresUnitSelect) {
-          expiresValueInput.value = '1';
-          const option = Array.from(expiresUnitSelect.options).find((opt) => opt.value === 'minutes');
-          if (!option) {
-            const minutesOption = document.createElement('option');
-            minutesOption.value = 'minutes';
-            minutesOption.textContent = 'Minutes (test only)';
-            expiresUnitSelect.appendChild(minutesOption);
-          }
-          expiresUnitSelect.value = 'minutes';
-        }
-      });
-    }
-
-    updateFileInputs();
-  </script>
-</body>
-</html>`);
-});
-
-app.post(
-  '/upload',
-  upload.fields([
-    { name: 'images', maxCount: 10 },
-    { name: 'video', maxCount: 1 },
-    { name: 'audio', maxCount: 2 },
-  ]),
-  (req, res) => {
-    let filesMeta = [];
-    try {
-      const { mediaType, expiresValue, expiresUnit, password } = req.body;
-
-      filesMeta = Object.keys(req.files || {}).flatMap((field) => {
-        return (req.files?.[field] || []).map((f) => ({
-          fieldName: field,
-          storedFilename: f.filename,
-          storedPath: f.path,
-          originalFilename: f.originalname,
-          mimeType: f.mimetype,
-          size: f.size,
-        }));
-      });
-
-      if (!filesMeta.length) {
-        console.warn('Upload attempt with no files received.', {
-          mediaType,
-          expiresValue,
-          expiresUnit,
-        });
-
-        deleteStoredFiles(filesMeta);
-        return sendValidationError(res, 'Upload failed', 'No files were uploaded. Please attach file(s) and try again.');
-      }
-
-      const normalizedType = mediaType === 'images' || mediaType === 'video' || mediaType === 'audio' ? mediaType : null;
-      if (!normalizedType) {
-        console.warn('Invalid media type received:', mediaType);
-        deleteStoredFiles(filesMeta);
-        return sendValidationError(res, 'Upload failed', 'Invalid media type. Please choose images, video, or audio.');
-      }
-
-      const filesForType = filesMeta.filter((f) => f.fieldName === normalizedType);
-
-      if (normalizedType === 'images') {
-        if (filesForType.length < 1 || filesForType.length > 10) {
-          console.warn('Image file count validation failed:', filesForType.length);
-          deleteStoredFiles(filesMeta);
-          return sendValidationError(res, 'Upload failed', 'For images, you can upload between 1 and 10 files.');
-        }
-      } else if (normalizedType === 'video') {
-        if (filesForType.length !== 1) {
-          console.warn('Video file count validation failed:', filesForType.length);
-          deleteStoredFiles(filesMeta);
-          return sendValidationError(res, 'Upload failed', 'For video, you must upload exactly one file.');
-        }
-      } else if (normalizedType === 'audio') {
-        if (filesForType.length < 1 || filesForType.length > 2) {
-          console.warn('Audio file count validation failed:', filesForType.length);
-          deleteStoredFiles(filesMeta);
-          return sendValidationError(res, 'Upload failed', 'For audio, you can upload between 1 and 2 files.');
-        }
-      }
-
-      const MB = 1024 * 1024;
-      const sizeLimits = {
-        images: 15 * MB,
-        video: 500 * MB,
-        audio: 50 * MB,
-      };
-
-      const limitForType = sizeLimits[normalizedType];
-      const tooLarge = filesForType.find((f) => f.size > limitForType);
-      if (tooLarge) {
-        console.warn('File size validation failed for', normalizedType, 'size(bytes)=', tooLarge.size);
-        deleteStoredFiles(filesMeta);
-        const messages = {
-          images: 'One or more images exceed the 15 MB limit.',
-          video: 'The video exceeds the 500 MB limit.',
-          audio: 'One or more audio files exceed the 50 MB limit.',
-        };
-        return sendValidationError(res, 'Upload failed', messages[normalizedType]);
-      }
-
-      const allowedByType = {
-        images: {
-          mime: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
-          ext: ['.jpg', '.jpeg', '.png', '.gif', '.webp'],
-        },
-        video: {
-          mime: ['video/mp4', 'video/webm', 'video/quicktime'],
-          ext: ['.mp4', '.webm', '.mov'],
-        },
-        audio: {
-          mime: ['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav', 'audio/webm', 'audio/mp4', 'audio/aac', 'audio/m4a'],
-          ext: ['.mp3', '.wav', '.m4a', '.aac'],
-        },
-      };
-
-      const rules = allowedByType[normalizedType];
-      const invalidTypeFile = filesForType.find((f) => {
-        const ext = path.extname(f.originalFilename || '').toLowerCase();
-        return !rules.mime.includes(f.mimeType) && !rules.ext.includes(ext);
-      });
-
-      if (invalidTypeFile) {
-        console.warn('File type validation failed for', normalizedType, 'file=', invalidTypeFile.originalFilename, 'mime=', invalidTypeFile.mimeType);
-        deleteStoredFiles(filesMeta);
-        const messages = {
-          images: 'Unsupported file type for images.',
-          video: 'Unsupported file type for video.',
-          audio: 'Unsupported file type for audio.',
-        };
-        return sendValidationError(res, 'Upload failed', messages[normalizedType]);
-      }
-
-      const numericValue = parseInt(expiresValue, 10);
-      if (Number.isNaN(numericValue) || numericValue <= 0) {
-        console.warn('Expiration value is invalid:', expiresValue, expiresUnit);
-        deleteStoredFiles(filesMeta);
-        return sendValidationError(res, 'Upload failed', 'Expiration must be between 1 hour and 30 days.');
-      }
-
-      let durationMs;
-      if (expiresUnit === 'hours') {
-        durationMs = numericValue * 60 * 60 * 1000;
-      } else if (expiresUnit === 'days') {
-        durationMs = numericValue * 24 * 60 * 60 * 1000;
-      } else if (ENABLE_TEST_EXPIRATION_SHORTCUT && expiresUnit === 'minutes') {
-        // Dev/test-only shortcut: allow exactly 1 minute expiration when enabled via env flag
-        if (numericValue !== 1) {
-          console.warn('Test expiration shortcut used with unsupported value:', numericValue, expiresUnit);
-          deleteStoredFiles(filesMeta);
-          return sendValidationError(res, 'Upload failed', 'For the 1 minute test option, expiration must be exactly 1 minute.');
-        }
-        durationMs = numericValue * 60 * 1000;
-      } else {
-        console.warn('Expiration unit is invalid:', expiresUnit);
-        deleteStoredFiles(filesMeta);
-        return sendValidationError(res, 'Upload failed', 'Expiration must be between 1 hour and 30 days.');
-      }
-
-      const minMs = ENABLE_TEST_EXPIRATION_SHORTCUT && expiresUnit === 'minutes' ? 1 * 60 * 1000 : 1 * 60 * 60 * 1000;
-      const maxMs = 30 * 24 * 60 * 60 * 1000;
-      if (durationMs < minMs || durationMs > maxMs) {
-        console.warn('Expiration range validation failed. Duration(ms)=', durationMs);
-        deleteStoredFiles(filesMeta);
-        return sendValidationError(res, 'Upload failed', 'Expiration must be between 1 hour and 30 days.');
-      }
-
-      const createdAtDate = new Date();
-      const createdAt = createdAtDate.toISOString();
-      const expiresAt = new Date(createdAtDate.getTime() + durationMs).toISOString();
-      const autoDeleteAt = new Date(createdAtDate.getTime() + durationMs + GRACE_PERIOD_MS).toISOString();
-
-      let passwordHash = null;
-      if (password && password.trim().length > 0) {
-        const salt = crypto.randomBytes(16).toString('hex');
-        const iterations = 100000;
-        const keylen = 64;
-        const digest = 'sha512';
-        const hash = crypto
-          .pbkdf2Sync(password, salt, iterations, keylen, digest)
-          .toString('hex');
-        passwordHash = {
-          algorithm: 'pbkdf2',
-          iterations,
-          keylen,
-          digest,
-          salt,
-          hash,
-        };
-      }
-
-      const uploadId = crypto.randomBytes(10).toString('hex');
-      const dashboardKey = crypto.randomBytes(12).toString('base64url').slice(0, 16);
-      const passwordVersion = passwordHash ? crypto.randomBytes(8).toString('hex') : null;
-
-      const record = {
-        id: uploadId,
-        mediaType: normalizedType,
-        files: filesMeta,
-        expiration: {
-          value: numericValue,
-          unit: expiresUnit,
-          durationMs,
-          expiresAt,
-          autoDeleteAt,
-        },
-        password: passwordHash,
-        createdAt,
-        countdownVisible: false,
-        viewCount: 0,
-        maxViews: null,
-        deleted: false,
-        expired: false,
-        deletedReason: null,
-        dashboardKey,
-        passwordVersion,
-      };
-
-      uploadsStore.push(record);
-
-      console.log('--- Upload stored ---');
-      console.log('Upload record:', record);
-
-      const totalFiles = filesMeta.length;
-      const originalNames = filesMeta.map((f) => f.originalFilename).join(', ');
-
-      const viewPath = `/v/${uploadId}`;
-      const viewUrl = `${req.protocol}://${req.get('host')}${viewPath}`;
-      const dashboardPath = `/dashboard/${uploadId}?key=${encodeURIComponent(dashboardKey)}`;
-      const dashboardUrl = `${req.protocol}://${req.get('host')}${dashboardPath}`;
-
-      res.status(200).send(`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Upload received • Temporary Media Links</title>
-  <style>
-    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 1.75rem; background: #020617; color: #e5e7eb; }
-    main { max-width: 640px; margin: 0 auto; padding: 1.6rem 1.5rem 1.75rem; border-radius: 1.25rem; background: #020617; border: 1px solid rgba(55,65,81,0.9); box-shadow: 0 25px 50px -24px rgba(15,23,42,0.9); }
-    h1 { font-size: 1.5rem; margin: 0 0 0.4rem; }
-    p { margin: 0.25rem 0; color: #9ca3af; }
-    dl { margin: 1rem 0 0.5rem; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 0.4rem 1rem; font-size: 0.9rem; }
-    dt { color: #9ca3af; }
-    dd { margin: 0; color: #e5e7eb; }
-    .actions { margin-top: 1.25rem; display: flex; flex-wrap: wrap; gap: 0.75rem; justify-content: flex-end; }
-    a.button { padding: 0.6rem 1.1rem; border-radius: 999px; border: 1px solid rgba(148,163,184,0.7); color: #e5e7eb; text-decoration: none; font-size: 0.9rem; display: inline-flex; align-items: center; gap: 0.35rem; }
-    a.button:hover { background: rgba(15,23,42,0.9); }
-  </style>
-</head>
-<body>
-  <main>
-    <h1>Upload stored successfully</h1>
-    <p>Your files and settings have been stored on the server. Links and dashboards will be added in a later step.</p>
-    <dl>
-      <dt>Upload ID</dt>
-      <dd>${uploadId}</dd>
-      <dt>View link</dt>
-      <dd><a href="${viewPath}">${viewUrl}</a></dd>
-      <dt>Dashboard link</dt>
-      <dd><a href="${dashboardPath}">${dashboardUrl}</a></dd>
-      <dt>Media type</dt>
-      <dd>${normalizedType}</dd>
-      <dt>Expiration</dt>
-      <dd>${numericValue} ${expiresUnit}</dd>
-      <dt>Password</dt>
-      <dd>${passwordHash ? 'Provided' : 'Not provided'}</dd>
-      <dt>Files</dt>
-      <dd>${totalFiles} file(s)</dd>
-      <dt>Original filenames</dt>
-      <dd>${originalNames || 'n/a'}</dd>
-    </dl>
-    <div class="actions">
-      <a href="/upload" class="button">New upload</a>
-      <a href="/" class="button">Back to start</a>
-    </div>
-  </main>
-</body>
-</html>`);
-    } catch (err) {
-      console.error('Error handling upload:', err);
-
-      res.status(500).send(`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Upload failed • Temporary Media Links</title>
-  <style>
-    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 1.75rem; background: #020617; color: #e5e7eb; }
-    main { max-width: 640px; margin: 0 auto; padding: 1.6rem 1.5rem 1.75rem; border-radius: 1.25rem; background: #020617; border: 1px solid rgba(127,29,29,0.9); box-shadow: 0 25px 50px -24px rgba(15,23,42,0.9); }
-    h1 { font-size: 1.4rem; margin: 0 0 0.4rem; color: #fecaca; }
-    p { margin: 0.25rem 0; color: #fca5a5; }
-    a.button { display: inline-flex; margin-top: 1rem; padding: 0.6rem 1.1rem; border-radius: 999px; border: 1px solid rgba(248,113,113,0.7); color: #fee2e2; text-decoration: none; font-size: 0.9rem; }
-    a.button:hover { background: rgba(127,29,29,0.8); }
-  </style>
-</head>
-<body>
-  <main>
-    <h1>Upload failed</h1>
-    <p>Something went wrong while storing your upload. Please try again later.</p>
-    <a href="/upload" class="button">Back to upload</a>
-  </main>
-</body>
-</html>`);
-    }
   }
-);
+</script>
+</body>
+</html>`);
+ });
 
-app.get('/v/:id', (req, res) => {
+ app.get('/v/:id', (req, res) => {
   const { id } = req.params;
+
   const record = uploadsStore.find((r) => r.id === id);
-
-  console.log('View access', {
-    uploadId: id,
-    at: new Date().toISOString(),
-    found: !!record,
-  });
-
-  if (!record) {
-    return res.status(404).send(`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Content not found • Temporary Media Links</title>
-  <style>
-    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 1.75rem; background: #020617; color: #e5e7eb; }
-    main { max-width: 720px; margin: 0 auto; padding: 1.75rem 1.5rem 2rem; border-radius: 1.25rem; background: #020617; border: 1px solid rgba(55,65,81,0.9); box-shadow: 0 25px 50px -24px rgba(15,23,42,0.9); }
-    h1 { font-size: 1.5rem; margin: 0 0 0.4rem; }
-    p { margin: 0.25rem 0; color: #9ca3af; }
-    a { color: #60a5fa; text-decoration: none; }
-    a:hover { text-decoration: underline; }
-  </style>
-</head>
-<body>
-  <main>
-    <h1>Content not found</h1>
-    <p>This link is invalid or the content is no longer available.</p>
-    <p><a href="/">Go back to Temporary Media Links</a></p>
-  </main>
-</body>
-</html>`);
-  }
-
-  if (record.deleted) {
+  if (!record || record.deleted) {
     return res.status(410).send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Content deleted • Temporary Media Links</title>
+  <title>Expired • FadeDrop</title>
   <style>
-    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 1.75rem; background: #020617; color: #e5e7eb; }
-    main { max-width: 720px; margin: 0 auto; padding: 1.75rem 1.5rem 2rem; border-radius: 1.25rem; background: #020617; border: 1px solid rgba(55,65,81,0.9); box-shadow: 0 25px 50px -24px rgba(15,23,42,0.9); }
-    h1 { font-size: 1.5rem; margin: 0 0 0.4rem; }
-    p { margin: 0.25rem 0; color: #9ca3af; }
-    a { color: #60a5fa; text-decoration: none; }
-    a:hover { text-decoration: underline; }
+    ${getWarmCss()}
   </style>
 </head>
 <body>
-  <main>
-    <h1>This content has been deleted by the uploader.</h1>
-    <p><a href="/">Go back to Temporary Media Links</a></p>
-  </main>
+  <div class="page">
+    <header class="top-header">
+      <div class="brand">FadeDrop</div>
+    </header>
+    <main class="card card-narrow">
+      <h1>This content has expired</h1>
+      <p>The link you tried to open is no longer available.</p>
+      <div class="actions">
+        <a class="btn-secondary" href="/">Back to upload</a>
+        <a class="btn-primary" href="/dashboard/${record ? record.id : id}?key=${record ? encodeURIComponent(record.dashboardKey) : ''}" target="_blank" rel="noopener noreferrer">Link settings</a>
+      </div>
+    </main>
+  </div>
 </body>
 </html>`);
   }
@@ -1571,60 +1965,34 @@ app.get('/v/:id', (req, res) => {
   const now = Date.now();
   const expiresAtMs = Date.parse(record.expiration?.expiresAt || record.createdAt || new Date().toISOString());
   const isExpired = Number.isFinite(expiresAtMs) ? now >= expiresAtMs : false;
-  const isDeleted = !!record.deleted;
-
-  if (isExpired) {
-    return res.status(410).send(`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Content not available • Temporary Media Links</title>
-  <style>
-    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 1.75rem; background: #020617; color: #e5e7eb; }
-    main { max-width: 720px; margin: 0 auto; padding: 1.75rem 1.5rem 2rem; border-radius: 1.25rem; background: #020617; border: 1px solid rgba(55,65,81,0.9); box-shadow: 0 25px 50px -24px rgba(15,23,42,0.9); }
-    h1 { font-size: 1.5rem; margin: 0 0 0.4rem; }
-    p { margin: 0.25rem 0; color: #9ca3af; }
-    a { color: #60a5fa; text-decoration: none; }
-    a:hover { text-decoration: underline; }
-  </style>
-</head>
-<body>
-  <main>
-    <h1>This content has expired</h1>
-    <p>The link you tried to open is no longer available.</p>
-    <p><a href="/">Go back to Temporary Media Links</a></p>
-    <p><a href="/dashboard/${record.id}?key=${encodeURIComponent(record.dashboardKey)}">Extend expiration date</a></p>
-  </main>
-</body>
-</html>`);
-  }
 
   const currentViews = Number.isFinite(record.viewCount) ? record.viewCount : 0;
   const maxViews = Number.isInteger(record.maxViews) && record.maxViews > 0 ? record.maxViews : null;
-
   if (maxViews !== null && currentViews >= maxViews) {
     return res.status(410).send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>View limit reached • Temporary Media Links</title>
+  <title>View limit reached • FadeDrop</title>
   <style>
-    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 1.75rem; background: #020617; color: #e5e7eb; }
-    main { max-width: 720px; margin: 0 auto; padding: 1.75rem 1.5rem 2rem; border-radius: 1.25rem; background: #020617; border: 1px solid rgba(55,65,81,0.9); box-shadow: 0 25px 50px -24px rgba(15,23,42,0.9); }
-    h1 { font-size: 1.5rem; margin: 0 0 0.4rem; }
-    p { margin: 0.25rem 0; color: #9ca3af; }
-    a { color: #60a5fa; text-decoration: none; }
-    a:hover { text-decoration: underline; }
+    ${getWarmCss()}
   </style>
 </head>
 <body>
-  <main>
-    <h1>View limit reached</h1>
-    <p>This content is no longer available because the maximum view limit has been reached.</p>
-    <p><a href="/">Go back to Temporary Media Links</a></p>
-  </main>
+  <div class="page">
+    <header class="top-header">
+      <div class="brand">FadeDrop</div>
+    </header>
+    <main class="card card-narrow">
+      <h1>View limit reached</h1>
+      <p>This content is no longer available because the maximum view limit has been reached.</p>
+      <div class="actions">
+        <a class="btn-secondary" href="/">Back to upload</a>
+        <a class="btn-primary" href="/dashboard/${record.id}?key=${encodeURIComponent(record.dashboardKey)}" target="_blank" rel="noopener noreferrer">Link settings</a>
+      </div>
+    </main>
+  </div>
 </body>
 </html>`);
   }
@@ -1637,22 +2005,22 @@ app.get('/v/:id', (req, res) => {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Unable to display content • Temporary Media Links</title>
+  <title>Unable to display content • FadeDrop</title>
   <style>
-    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 1.75rem; background: #020617; color: #e5e7eb; }
-    main { max-width: 720px; margin: 0 auto; padding: 1.75rem 1.5rem 2rem; border-radius: 1.25rem; background: #020617; border: 1px solid rgba(127,29,29,0.9); box-shadow: 0 25px 50px -24px rgba(15,23,42,0.9); }
-    h1 { font-size: 1.5rem; margin: 0 0 0.4rem; color: #fecaca; }
-    p { margin: 0.25rem 0; color: #fca5a5; }
-    a { color: #60a5fa; text-decoration: none; }
-    a:hover { text-decoration: underline; }
+    ${getWarmCss()}
   </style>
 </head>
 <body>
-  <main>
-    <h1>Unable to display content</h1>
-    <p>This upload record does not contain any files that can be shown.</p>
-    <p><a href="/">Go back to Temporary Media Links</a></p>
-  </main>
+  <div class="page">
+    <header class="top-header">
+      <div class="brand">FadeDrop</div>
+    </header>
+    <main class="card card-narrow">
+      <h1>Unable to display content</h1>
+      <p class="error">This upload record does not contain any files that can be shown.</p>
+      <p class="back-link"><a href="/">Back to upload</a></p>
+    </main>
+  </div>
 </body>
 </html>`);
   }
@@ -1660,9 +2028,9 @@ app.get('/v/:id', (req, res) => {
   const requiresPassword = !!record.password;
 
   if (requiresPassword) {
-    const cookies = parseCookies(req);
+    const cookies = typeof parseCookies === 'function' ? parseCookies(req) : {};
     const expected = record.passwordVersion;
-    const cookieName = getViewCookieName(record.id);
+    const cookieName = typeof getViewCookieName === 'function' ? getViewCookieName(record.id) : `fadedrop_view_${record.id}`;
     const cookieValue = cookies[cookieName];
 
     if (!expected || !cookieValue || cookieValue !== expected) {
@@ -1676,34 +2044,30 @@ app.get('/v/:id', (req, res) => {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Protected link • Temporary Media Links</title>
+  <title>Protected link • FadeDrop</title>
   <style>
-    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 1.75rem; background: #020617; color: #e5e7eb; }
-    main { max-width: 480px; margin: 0 auto; padding: 1.75rem 1.5rem 2rem; border-radius: 1.25rem; background: #020617; border: 1px solid rgba(55,65,81,0.9); box-shadow: 0 25px 50px -24px rgba(15,23,42,0.9); }
-    h1 { font-size: 1.5rem; margin: 0 0 0.5rem; }
-    p { margin: 0.25rem 0; color: #9ca3af; }
+    ${getWarmCss()}
     form { margin-top: 1rem; display: grid; gap: 0.6rem; }
-    label { font-size: 0.85rem; color: #e5e7eb; }
-    input[type="password"] { width: 100%; padding: 0.5rem 0.6rem; border-radius: 0.55rem; border: 1px solid rgba(55,65,81,0.9); background: rgba(15,23,42,0.96); color: #e5e7eb; font-size: 0.9rem; }
-    input[type="password"]:focus { outline: none; border-color: #6366f1; box-shadow: 0 0 0 1px rgba(99,102,241,0.8); }
-    button { padding: 0.6rem 1.2rem; border-radius: 999px; border: none; background: linear-gradient(to right, #4f46e5, #06b6d4); color: white; font-weight: 600; font-size: 0.9rem; cursor: pointer; justify-self: flex-start; }
-    button:hover { filter: brightness(1.05); }
-    a { color: #60a5fa; text-decoration: none; }
-    a:hover { text-decoration: underline; }
+    label { font-size: 0.85rem; color: var(--text); font-weight: 650; }
   </style>
 </head>
 <body>
-  <main>
-    <h1>Password required</h1>
-    <p>This link is protected. Enter the password to view the content.</p>
-    ${errorHtml}
-    <form method="post" action="/v/${record.id}/password">
-      <label for="password">Password</label>
-      <input type="password" id="password" name="password" autocomplete="current-password" required />
-      <button type="submit">Unlock</button>
-    </form>
-    <p style="margin-top:1rem;font-size:0.85rem;"><a href="/">Back to Temporary Media Links</a></p>
-  </main>
+  <div class="page">
+    <header class="top-header">
+      <div class="brand">FadeDrop</div>
+    </header>
+    <main class="card card-narrow" style="max-width:520px;">
+      <h1>Password required</h1>
+      <p>This link is protected. Enter the password to view the content.</p>
+      ${errorHtml}
+      <form method="post" action="/v/${record.id}/password">
+        <label for="password">Password</label>
+        <input class="input" type="password" id="password" name="password" autocomplete="current-password" required />
+        <button class="btn-primary" type="submit">Unlock</button>
+      </form>
+      <p class="back-link"><a href="/">Back to upload</a></p>
+    </main>
+  </div>
 </body>
 </html>`);
     }
@@ -1723,7 +2087,7 @@ app.get('/v/:id', (req, res) => {
     audio: 'Audio',
   };
 
-  const pageTitle = `View ${titleByType[type] || 'content'} • Temporary Media Links`;
+  const pageTitle = `Shared content • FadeDrop`;
 
   const countdownVisibleForView = record.countdownVisible !== false;
   let expiresInText = '';
@@ -1731,23 +2095,13 @@ app.get('/v/:id', (req, res) => {
     const diff = expiresAtMs - now;
     if (diff > 0) {
       const minutes = Math.round(diff / (60 * 1000));
-      const hours = Math.floor(minutes / 60);
-      const days = Math.floor(hours / 24);
+      const hours = Math.round(minutes / 60);
+      const days = Math.round(hours / 24);
 
-      if (days >= 1) {
-        const remHours = hours - days * 24;
-        if (remHours > 0) {
-          expiresInText = `Expires in ${days} day${days === 1 ? '' : 's'}, ${remHours} hour${remHours === 1 ? '' : 's'}`;
-        } else {
-          expiresInText = `Expires in ${days} day${days === 1 ? '' : 's'}`;
-        }
-      } else if (hours >= 1) {
-        const remMinutes = minutes - hours * 60;
-        if (remMinutes > 0) {
-          expiresInText = `Expires in ${hours} hour${hours === 1 ? '' : 's'}, ${remMinutes} minute${remMinutes === 1 ? '' : 's'}`;
-        } else {
-          expiresInText = `Expires in ${hours} hour${hours === 1 ? '' : 's'}`;
-        }
+      if (days >= 2) {
+        expiresInText = `Expires in ${days} days`;
+      } else if (hours >= 2) {
+        expiresInText = `Expires in ${hours} hours`;
       } else {
         const mins = Math.max(1, minutes);
         expiresInText = `Expires in ${mins} minute${mins === 1 ? '' : 's'}`;
@@ -1755,9 +2109,8 @@ app.get('/v/:id', (req, res) => {
     }
   }
 
-  const expiresMetaHtml = expiresInText
-    ? `<p class="meta">${expiresInText}</p>`
-    : '';
+  const expiresMetaHtml = `<p class="meta">This content is temporary and will expire automatically.</p>` +
+    (expiresInText ? `<p class="meta">${expiresInText}</p>` : '');
 
   const mediaHtml = (() => {
     if (type === 'images') {
@@ -1815,34 +2168,39 @@ app.get('/v/:id', (req, res) => {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${pageTitle}</title>
   <style>
-    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 1.75rem; background: #020617; color: #e5e7eb; }
-    main { max-width: 960px; margin: 0 auto; padding: 1.75rem 1.5rem 2rem; border-radius: 1.25rem; background: #020617; border: 1px solid rgba(55,65,81,0.9); box-shadow: 0 25px 50px -24px rgba(15,23,42,0.9); }
-    h1 { font-size: 1.6rem; margin: 0 0 0.5rem; }
-    p { margin: 0.25rem 0; color: #9ca3af; }
-    .meta { font-size: 0.8rem; color: #6b7280; margin-bottom: 1rem; }
-    .gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-top: 1.25rem; }
-    .gallery .item { background: #020617; border-radius: 0.75rem; border: 1px solid rgba(55,65,81,0.9); padding: 0.5rem; }
-    .gallery img { width: 100%; height: auto; border-radius: 0.5rem; display: block; background: #020617; }
-    .gallery figcaption { margin-top: 0.35rem; font-size: 0.8rem; color: #9ca3af; word-break: break-all; }
-    .player-wrap { margin-top: 1.25rem; }
-    video { width: 100%; max-height: 70vh; border-radius: 0.75rem; background: #020617; }
-    .filename { font-size: 0.85rem; color: #9ca3af; margin-top: 0.4rem; word-break: break-all; }
-    .audio-list { margin-top: 1.25rem; display: grid; gap: 0.75rem; }
-    .audio-item { padding: 0.75rem 0.75rem 0.85rem; border-radius: 0.75rem; border: 1px solid rgba(55,65,81,0.9); background: #020617; }
+    ${getWarmCss()}
+    .meta { font-size: 0.85rem; color: var(--muted); margin-bottom: 0.85rem; }
+    .gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-top: 1.1rem; }
+    .gallery .item { background: rgba(255, 255, 255, 0.65); border-radius: var(--radius-md); border: 1px solid rgba(60, 45, 30, 0.12); padding: 0.6rem; box-shadow: var(--shadow-soft); }
+    .gallery img { width: 100%; height: auto; border-radius: 14px; display: block; background: rgba(255, 255, 255, 0.8); }
+    .gallery figcaption { margin-top: 0.35rem; font-size: 0.8rem; color: var(--muted); word-break: break-all; }
+    .player-wrap { margin-top: 1.1rem; }
+    video { width: 100%; max-height: 70vh; border-radius: var(--radius-md); background: rgba(255, 255, 255, 0.8); }
+    .filename { font-size: 0.85rem; color: var(--muted); margin-top: 0.4rem; word-break: break-all; }
+    .audio-list { margin-top: 1.1rem; display: grid; gap: 0.75rem; }
+    .audio-item { padding: 0.85rem 0.85rem 0.95rem; border-radius: var(--radius-md); border: 1px solid rgba(60, 45, 30, 0.12); background: rgba(255, 255, 255, 0.65); box-shadow: var(--shadow-soft); }
     audio { width: 100%; margin-top: 0.25rem; }
-    a { color: #60a5fa; text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    .back-link { margin-top: 1.25rem; font-size: 0.85rem; }
+
+    @media (max-width: 480px) {
+      .gallery { grid-template-columns: 1fr; }
+      .gallery figcaption { word-break: break-word; }
+      .filename { word-break: break-word; }
+    }
   </style>
 </head>
 <body>
-  <main>
-    <h1>Shared media</h1>
-    <p class="meta">Upload ID: ${record.id} • Type: ${record.mediaType}</p>
-    ${expiresMetaHtml}
-    ${mediaHtml}
-    <p class="back-link"><a href="/">Back to Temporary Media Links</a></p>
-  </main>
+  <div class="page">
+    <header class="top-header">
+      <div class="brand">FadeDrop</div>
+      <p class="tagline">Temporary media links for images, video, and audio.</p>
+    </header>
+    <main class="card">
+      <h1>Shared content</h1>
+      ${expiresMetaHtml}
+      ${mediaHtml}
+      <p class="back-link"><a href="/">Back to upload</a></p>
+    </main>
+  </div>
 </body>
 </html>`);
 });

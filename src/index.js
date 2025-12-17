@@ -266,7 +266,7 @@ const GRACE_PERIOD_MS = 24 * 60 * 60 * 1000;
    try {
      console.log('Auto-deleting expired upload', {
        uploadId: record.id,
-       at: new Date(now).toISOString(),
+       at: new Date().toISOString(),
      });
      deleteStoredFiles(record.files || []);
    } catch (err) {
@@ -281,8 +281,25 @@ const GRACE_PERIOD_MS = 24 * 60 * 60 * 1000;
    record.passwordVersion = null;
    record.maxViews = null;
 
-   return true;
- }
+  return true;
+}
+
+function formatDisplayTimestamp(value) {
+  if (!value) return 'n/a';
+  try {
+    const date = value instanceof Date ? value : new Date(value);
+    if (!Number.isFinite(date.getTime())) return 'n/a';
+    return date.toLocaleString(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return String(value);
+  }
+}
 
 function parseCookies(req) {
   const header = (req && req.headers && req.headers.cookie) || '';
@@ -798,7 +815,6 @@ function getUploadPageHtml(options = {}) {
               <input type="number" id="expiresValue" name="expiresValue" min="1" max="30" value="1" />
               <select id="expiresUnit" name="expiresUnit">
                 <option value="hours">Hours</option>
-                ${ONE_MINUTE_EXPIRATION_ENABLED ? '<option value="minutes">Minutes</option>' : ''}
                 <option value="days" selected>Days</option>
               </select>
             </div>
@@ -931,7 +947,6 @@ function getUploadPageHtml(options = {}) {
       if (!Number.isFinite(value) || value <= 0) return 24 * 60 * 60 * 1000;
       if (unit === 'hours') return value * 60 * 60 * 1000;
       if (unit === 'days') return value * 24 * 60 * 60 * 1000;
-      if (unit === 'minutes') return value * 60 * 1000;
       return value * 24 * 60 * 60 * 1000;
     }
 
@@ -1171,20 +1186,9 @@ app.post(
         return sendValidationError(res, 'No files selected', 'Please choose at least one file to upload.');
       }
 
-      const requestedUnit = String(expiresUnitRaw);
-      const expiresUnit =
-        requestedUnit === 'hours'
-          ? 'hours'
-          : requestedUnit === 'minutes' && ONE_MINUTE_EXPIRATION_ENABLED
-          ? 'minutes'
-          : 'days';
       const expiresValue = Math.max(1, Math.min(30, parseInt(String(expiresValueRaw), 10) || 1));
-      const durationMs =
-        expiresUnit === 'minutes'
-          ? expiresValue * 60 * 1000
-          : expiresUnit === 'hours'
-          ? expiresValue * 60 * 60 * 1000
-          : expiresValue * 24 * 60 * 60 * 1000;
+      const expiresUnit = expiresUnitRaw === 'hours' ? 'hours' : 'days';
+      const durationMs = expiresUnit === 'hours' ? expiresValue * 60 * 60 * 1000 : expiresValue * 24 * 60 * 60 * 1000;
 
       const now = Date.now();
       const expiresAt = new Date(now + durationMs);
@@ -1543,15 +1547,20 @@ app.post('/dashboard/:id/password', (req, res) => {
   const expiresAtMs = Date.parse(record.expiration?.expiresAt || record.createdAt || new Date().toISOString());
   const isExpired = Number.isFinite(expiresAtMs) ? now >= expiresAtMs : false;
 
-  const createdAt = record.createdAt;
-  const expiresAt = record.expiration?.expiresAt || 'n/a';
-  const autoDeleteAt = (() => {
+  const createdAtIso = record.createdAt;
+  const expiresAtIso = record.expiration?.expiresAt || null;
+  const autoDeleteAtIso = (() => {
     const direct = record.expiration?.autoDeleteAt;
     if (direct) return direct;
-    const expiresMs = Date.parse(expiresAt);
-    if (!Number.isFinite(expiresMs)) return 'n/a';
+    const expiresMs = Date.parse(expiresAtIso || '');
+    if (!Number.isFinite(expiresMs)) return null;
     return new Date(expiresMs + AUTO_DELETE_GRACE_PERIOD_MS).toISOString();
   })();
+
+  const createdAt = formatDisplayTimestamp(createdAtIso);
+  const expiresAt = formatDisplayTimestamp(expiresAtIso);
+  const autoDeleteAt = formatDisplayTimestamp(autoDeleteAtIso);
+  const deletedAtLabel = formatDisplayTimestamp(record.deletedAt);
 
   let timeRemainingLabel = 'n/a';
   if (Number.isFinite(expiresAtMs)) {
@@ -1732,7 +1741,7 @@ app.post('/dashboard/:id/password', (req, res) => {
           <dd>${expiresAt}</dd>
           <dt>Auto-deletes at</dt>
           <dd>${autoDeleteAt}</dd>
-          ${record.deleted ? '<dt>Deleted at</dt><dd>' + (record.deletedAt || 'n/a') + '</dd>' : ''}
+          ${record.deleted ? '<dt>Deleted at</dt><dd>' + deletedAtLabel + '</dd>' : ''}
           <dt>Time remaining</dt>
           <dd>${timeRemainingLabel}</dd>
           <dt>Link status</dt>
@@ -2178,7 +2187,8 @@ app.post('/dashboard/:id/password', (req, res) => {
 
   const countdownVisibleForView = record.countdownVisible !== false;
   let expiresInText = '';
-  if (countdownVisibleForView && Number.isFinite(expiresAtMs) && !isExpired && maxViews !== null ? currentViews < maxViews : true) {
+  const underViewLimit = maxViews !== null ? currentViews < maxViews : true;
+  if (countdownVisibleForView && Number.isFinite(expiresAtMs) && !isExpired && underViewLimit) {
     const diff = expiresAtMs - now;
     if (diff > 0) {
       const minutes = Math.round(diff / (60 * 1000));

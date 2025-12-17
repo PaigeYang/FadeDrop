@@ -81,6 +81,10 @@ app.post('/dashboard/:id/expiration', (req, res) => {
     return res.status(401).send('Unauthorized');
   }
 
+   if (record.deleted) {
+     return res.redirect('/dashboard/' + encodeURIComponent(id) + '?key=' + encodeURIComponent(key) + '&expError=deleted');
+   }
+
   const rawExtend = (req.body && req.body.extendBy) || '';
   const trimmedExtend = rawExtend.trim();
   const extendByMs = Number.parseInt(trimmedExtend, 10);
@@ -114,6 +118,7 @@ app.post('/dashboard/:id/expiration', (req, res) => {
 
   record.expiration = record.expiration || {};
   record.expiration.expiresAt = new Date(newExpiresMs).toISOString();
+  record.expiration.autoDeleteAt = new Date(newExpiresMs + AUTO_DELETE_GRACE_PERIOD_MS).toISOString();
   if (Number.isFinite(createdAtMs)) {
     record.expiration.durationMs = newExpiresMs - createdAtMs;
   }
@@ -191,6 +196,7 @@ app.post('/dashboard/:id/delete', (req, res) => {
 
   record.deleted = true;
   record.deletedAt = new Date().toISOString();
+  record.deletedReason = 'manual';
 
   // Once deleted, password and view limits are irrelevant.
   record.password = null;
@@ -227,6 +233,56 @@ const uploadsStore = [];
 
 // 24-hour grace period after expiration before automatic deletion.
 const GRACE_PERIOD_MS = 24 * 60 * 60 * 1000;
+
+ const AUTO_DELETE_GRACE_PERIOD_MS = (() => {
+   const raw = process.env.FADEDROP_GRACE_PERIOD_MS_OVERRIDE;
+   if (!raw) return GRACE_PERIOD_MS;
+   const parsed = Number.parseInt(raw, 10);
+   return Number.isFinite(parsed) && parsed >= 0 ? parsed : GRACE_PERIOD_MS;
+ })();
+
+ function getExpiresAtMs(record) {
+   if (!record) return NaN;
+   return Date.parse(record.expiration?.expiresAt || record.createdAt || '');
+ }
+
+ function getAutoDeleteAtMs(record) {
+   if (!record) return NaN;
+   const direct = Date.parse(record.expiration?.autoDeleteAt || '');
+   if (Number.isFinite(direct)) return direct;
+   const expiresAtMs = getExpiresAtMs(record);
+   if (!Number.isFinite(expiresAtMs)) return NaN;
+   return expiresAtMs + AUTO_DELETE_GRACE_PERIOD_MS;
+ }
+
+ function autoDeleteUploadIfNeeded(record) {
+   if (!record) return false;
+   if (record.deleted) return false;
+ 
+   const now = Date.now();
+   const autoDeleteAtMs = getAutoDeleteAtMs(record);
+   if (!Number.isFinite(autoDeleteAtMs) || now < autoDeleteAtMs) return false;
+
+   try {
+     console.log('Auto-deleting expired upload', {
+       uploadId: record.id,
+       at: new Date(now).toISOString(),
+     });
+     deleteStoredFiles(record.files || []);
+   } catch (err) {
+     console.error('Error auto-deleting expired upload:', err);
+   }
+
+   record.deleted = true;
+   record.deletedReason = 'auto';
+   record.deletedAt = new Date(now).toISOString();
+
+   record.password = null;
+   record.passwordVersion = null;
+   record.maxViews = null;
+
+   return true;
+ }
 
 function parseCookies(req) {
   const header = (req && req.headers && req.headers.cookie) || '';
@@ -742,6 +798,7 @@ function getUploadPageHtml(options = {}) {
               <input type="number" id="expiresValue" name="expiresValue" min="1" max="30" value="1" />
               <select id="expiresUnit" name="expiresUnit">
                 <option value="hours">Hours</option>
+                ${ONE_MINUTE_EXPIRATION_ENABLED ? '<option value="minutes">Minutes</option>' : ''}
                 <option value="days" selected>Days</option>
               </select>
             </div>
@@ -819,7 +876,7 @@ function getUploadPageHtml(options = {}) {
     const listEl = document.getElementById('files-list');
     const warningEl = document.getElementById('files-warning');
 
-    const GRACE_PERIOD_MS = 24 * 60 * 60 * 1000;
+    const GRACE_PERIOD_MS = ${AUTO_DELETE_GRACE_PERIOD_MS};
 
     const state = {
       images: [],
@@ -1114,13 +1171,24 @@ app.post(
         return sendValidationError(res, 'No files selected', 'Please choose at least one file to upload.');
       }
 
+      const requestedUnit = String(expiresUnitRaw);
+      const expiresUnit =
+        requestedUnit === 'hours'
+          ? 'hours'
+          : requestedUnit === 'minutes' && ONE_MINUTE_EXPIRATION_ENABLED
+          ? 'minutes'
+          : 'days';
       const expiresValue = Math.max(1, Math.min(30, parseInt(String(expiresValueRaw), 10) || 1));
-      const expiresUnit = expiresUnitRaw === 'hours' ? 'hours' : 'days';
-      const durationMs = expiresUnit === 'hours' ? expiresValue * 60 * 60 * 1000 : expiresValue * 24 * 60 * 60 * 1000;
+      const durationMs =
+        expiresUnit === 'minutes'
+          ? expiresValue * 60 * 1000
+          : expiresUnit === 'hours'
+          ? expiresValue * 60 * 60 * 1000
+          : expiresValue * 24 * 60 * 60 * 1000;
 
       const now = Date.now();
       const expiresAt = new Date(now + durationMs);
-      const autoDeleteAt = new Date(now + durationMs + GRACE_PERIOD_MS);
+      const autoDeleteAt = new Date(now + durationMs + AUTO_DELETE_GRACE_PERIOD_MS);
 
       const id = crypto.randomBytes(10).toString('hex');
       const dashboardKey = crypto.randomBytes(12).toString('base64url');
@@ -1438,7 +1506,6 @@ app.post('/dashboard/:id/password', (req, res) => {
 </body>
 </html>`);
   }
-
   if (!key || key !== record.dashboardKey) {
     console.warn('Unauthorized dashboard access', {
       uploadId: id,
@@ -1470,6 +1537,8 @@ app.post('/dashboard/:id/password', (req, res) => {
 </html>`);
   }
 
+  autoDeleteUploadIfNeeded(record);
+
   const now = Date.now();
   const expiresAtMs = Date.parse(record.expiration?.expiresAt || record.createdAt || new Date().toISOString());
   const isExpired = Number.isFinite(expiresAtMs) ? now >= expiresAtMs : false;
@@ -1481,7 +1550,7 @@ app.post('/dashboard/:id/password', (req, res) => {
     if (direct) return direct;
     const expiresMs = Date.parse(expiresAt);
     if (!Number.isFinite(expiresMs)) return 'n/a';
-    return new Date(expiresMs + GRACE_PERIOD_MS).toISOString();
+    return new Date(expiresMs + AUTO_DELETE_GRACE_PERIOD_MS).toISOString();
   })();
 
   let timeRemainingLabel = 'n/a';
@@ -1517,7 +1586,9 @@ app.post('/dashboard/:id/password', (req, res) => {
   const viewUrl = `${req.protocol}://${req.get('host')}${viewPath}`;
 
   const status = record.deleted
-    ? 'Deleted'
+    ? record.deletedReason === 'auto'
+      ? 'Automatically deleted'
+      : 'Deleted by uploader'
     : isExpired
     ? 'Expired'
     : overViewLimit
@@ -1661,6 +1732,7 @@ app.post('/dashboard/:id/password', (req, res) => {
           <dd>${expiresAt}</dd>
           <dt>Auto-deletes at</dt>
           <dd>${autoDeleteAt}</dd>
+          ${record.deleted ? '<dt>Deleted at</dt><dd>' + (record.deletedAt || 'n/a') + '</dd>' : ''}
           <dt>Time remaining</dt>
           <dd>${timeRemainingLabel}</dd>
           <dt>Link status</dt>
@@ -1676,7 +1748,9 @@ app.post('/dashboard/:id/password', (req, res) => {
         <h2>Link settings</h2>
         ${
           record.deleted
-            ? '<p style="font-size:0.85rem;color:#fca5a5;margin:0 0 0.6rem;">This link has been deleted. Content is no longer available. Settings are disabled.</p>'
+            ? '<p style="font-size:0.85rem;color:#fca5a5;margin:0 0 0.6rem;">This link is read-only because it was ' +
+              (record.deletedReason === 'auto' ? 'deleted automatically after expiration' : 'deleted by the uploader') +
+              '.</p>'
             : '<div style="margin-bottom:0.85rem;padding:0.85rem 0.85rem 0.95rem;border-radius:0.75rem;border:1px solid rgba(60,45,30,0.12);background:rgba(255,255,255,0.6);">\n' +
               '  <h3 style="margin:0 0 0.4rem;font-size:0.9rem;">Expiration</h3>\n' +
               '  <p style="margin:0 0 0.35rem;font-size:0.8rem;color:var(--muted);">This link will disappear automatically after expiration. You can extend it up to 30 days from now.</p>\n' +
@@ -1869,7 +1943,9 @@ app.post('/dashboard/:id/password', (req, res) => {
       <p style="font-size:0.85rem;color:#9ca3af;">Use this section to permanently delete this link. This cannot be undone.</p>
       ${
         record.deleted
-          ? '<p style="margin-top:0.5rem;font-size:0.85rem;color:#fca5a5;">This link has been deleted. All associated media was removed, and the view link now shows a deleted message.</p>'
+          ? '<p style="margin-top:0.5rem;font-size:0.85rem;color:#fca5a5;">This link was ' +
+            (record.deletedReason === 'auto' ? 'deleted automatically after expiration.' : 'deleted by the uploader.') +
+            ' The public link now shows a deletion message.</p>'
           : '<form method="post" action="/dashboard/' +
             record.id +
             '/delete?key=' +
@@ -1933,13 +2009,25 @@ app.post('/dashboard/:id/password', (req, res) => {
   const { id } = req.params;
 
   const record = uploadsStore.find((r) => r.id === id);
+  if (record) autoDeleteUploadIfNeeded(record);
   if (!record || record.deleted) {
+    const heading = !record
+      ? 'This content has expired'
+      : record.deletedReason === 'auto'
+      ? 'This content has been deleted'
+      : 'This content has been deleted';
+    const message = !record
+      ? 'The link you tried to open is no longer available.'
+      : record.deletedReason === 'auto'
+      ? 'This content has been deleted automatically after its expiration period.'
+      : 'This content has been deleted by the uploader.';
+
     return res.status(410).send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Expired • FadeDrop</title>
+  <title>Unavailable • FadeDrop</title>
   <style>
     ${getWarmCss()}
   </style>
@@ -1950,11 +2038,10 @@ app.post('/dashboard/:id/password', (req, res) => {
       <div class="brand">FadeDrop</div>
     </header>
     <main class="card card-narrow">
-      <h1>This content has expired</h1>
-      <p>The link you tried to open is no longer available.</p>
+      <h1>${heading}</h1>
+      <p>${message}</p>
       <div class="actions">
         <a class="btn-secondary" href="/">Back to upload</a>
-        <a class="btn-primary" href="/dashboard/${record ? record.id : id}?key=${record ? encodeURIComponent(record.dashboardKey) : ''}" target="_blank" rel="noopener noreferrer">Link settings</a>
       </div>
     </main>
   </div>
@@ -2248,6 +2335,12 @@ app.post('/v/:id/password', (req, res) => {
 const server = app.listen(PORT, () => {
   console.log(`Temporary Media Links service is running on http://localhost:${PORT}`);
 });
+
+setInterval(() => {
+  (uploadsStore || []).forEach((record) => {
+    autoDeleteUploadIfNeeded(record);
+  });
+}, 30 * 1000);
 
 server.on('error', (err) => {
   console.error('Failed to start server:', err);

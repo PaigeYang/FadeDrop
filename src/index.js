@@ -43,6 +43,17 @@ app.post('/dashboard/:id/views', (req, res) => {
     return res.status(401).send('Unauthorized');
   }
 
+  autoDeleteUploadIfNeeded(record);
+  if (record.deleted) {
+    return res.redirect('/dashboard/' + encodeURIComponent(id) + '?key=' + encodeURIComponent(key) + '&viewError=inactive');
+  }
+
+  const now = Date.now();
+  const autoDeleteAtMs = getAutoDeleteAtMs(record);
+  if (Number.isFinite(autoDeleteAtMs) && now >= autoDeleteAtMs) {
+    return res.redirect('/dashboard/' + encodeURIComponent(id) + '?key=' + encodeURIComponent(key) + '&viewError=inactive');
+  }
+
   const mode = (req.body && req.body.mode) || 'set';
 
   if (mode === 'remove') {
@@ -56,6 +67,16 @@ app.post('/dashboard/:id/views', (req, res) => {
 
   if (!trimmed || Number.isNaN(value) || value <= 0 || value > 100000) {
     return res.redirect('/dashboard/' + encodeURIComponent(id) + '?key=' + encodeURIComponent(key) + '&viewError=invalid');
+  }
+
+  const currentViews = Number.isFinite(record.viewCount) ? record.viewCount : 0;
+  if (value < currentViews) {
+    return res.redirect('/dashboard/' + encodeURIComponent(id) + '?key=' + encodeURIComponent(key) + '&viewError=belowCurrent');
+  }
+
+  const existingMaxViews = Number.isInteger(record.maxViews) && record.maxViews > 0 ? record.maxViews : null;
+  if (existingMaxViews !== null && value < existingMaxViews) {
+    return res.redirect('/dashboard/' + encodeURIComponent(id) + '?key=' + encodeURIComponent(key) + '&viewError=decrease');
   }
 
   record.maxViews = value;
@@ -522,6 +543,338 @@ function sendValidationError(res, title, message) {
 </html>`);
 }
 
+function getTermsPageHtml() {
+  const lastUpdated = new Date().toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+  });
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Terms • FadeDrop</title>
+  <style>
+    ${getWarmCss()}
+    .prose { margin-top: 1rem; display: grid; gap: 1rem; }
+    .prose h2 { margin: 0.75rem 0 0.25rem; font-size: 1.05rem; }
+    .prose p { margin: 0.25rem 0; }
+    .prose ul { margin: 0.25rem 0 0.5rem; padding-left: 1.15rem; color: var(--muted); }
+    .prose li { margin: 0.25rem 0; }
+    .meta { font-size: 0.85rem; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="top-header">
+      <div class="brand">FadeDrop</div>
+      <p class="tagline">Terms of Use</p>
+    </header>
+    <main class="card card-narrow">
+      <h1>Terms of Use</h1>
+      <p class="meta">Last updated: ${lastUpdated}</p>
+
+      <div class="prose">
+        <section>
+          <p>These Terms of Use explain the rules for using FadeDrop. By uploading or viewing content on FadeDrop, you agree to these terms.</p>
+          <p>FadeDrop provides temporary, unlisted links to media files (images, video, audio). Uploads expire and are deleted automatically after a short grace period.</p>
+        </section>
+
+        <section>
+          <h2>1. What FadeDrop Provides</h2>
+          <ul>
+            <li>Temporary sharing of images, videos, and audio</li>
+            <li>Auto-expiring links that delete themselves after a grace period</li>
+            <li>Optional password protection</li>
+            <li>Optional view limits</li>
+            <li>A private dashboard link for managing or deleting uploads</li>
+          </ul>
+          <p>FadeDrop is for short-term sharing only.</p>
+        </section>
+
+        <section>
+          <h2>2. Your Responsibility When Uploading</h2>
+          <p>By uploading content, you confirm that:</p>
+          <ul>
+            <li>The content is legal where you live and where it may be viewed</li>
+            <li>You own the rights to the content or have permission to share it</li>
+            <li>The content does not violate copyright, privacy, or consent</li>
+            <li>You take full responsibility for your uploads</li>
+            <li>Your content may be removed if it violates these terms</li>
+          </ul>
+          <p>You must check the required confirmation box before creating a link.</p>
+        </section>
+
+        <section>
+          <h2>3. Prohibited Content</h2>
+          <p>You may not upload or share content that is:</p>
+          <p><strong>Illegal</strong></p>
+          <p>Examples include:</p>
+          <ul>
+            <li>Child sexual abuse material (CSAM)</li>
+            <li>Non-consensual intimate imagery</li>
+            <li>Sexual or violent content involving minors</li>
+            <li>Human trafficking or extremist material</li>
+            <li>Anything prohibited by law</li>
+          </ul>
+
+          <p><strong>Abusive or harmful</strong></p>
+          <ul>
+            <li>Harassment, hate content, doxxing, threats</li>
+            <li>Material intended to harm or target someone</li>
+          </ul>
+
+          <p><strong>Infringing</strong></p>
+          <ul>
+            <li>Copyrighted or proprietary material you do not have rights to share</li>
+          </ul>
+
+          <p><strong>Malicious</strong></p>
+          <ul>
+            <li>Malware, viruses, trojans, or harmful files</li>
+            <li>Attempts to exploit or disrupt FadeDrop</li>
+          </ul>
+
+          <p>FadeDrop has zero tolerance for illegal or harmful uploads.</p>
+        </section>
+
+        <section>
+          <h2>4. Upload Expiration &amp; Deletion</h2>
+          <p>Every upload has:</p>
+          <ul>
+            <li>An expiration time (chosen by the uploader)</li>
+            <li>A 24-hour grace period after expiration</li>
+            <li>Permanent deletion once the grace period ends</li>
+          </ul>
+          <p>Uploaders may also delete their content at any time through the dashboard link. Once deleted, content cannot be restored.</p>
+          <p>FadeDrop may delete content earlier if legally required or if it violates these terms.</p>
+        </section>
+
+        <section>
+          <h2>5. Passwords, Viewing Controls &amp; User Rights</h2>
+          <p>Uploaders may choose to:</p>
+          <ul>
+            <li>Add password protection</li>
+            <li>Set a maximum number of allowed viewers</li>
+            <li>Show or hide the expiration countdown</li>
+            <li>Delete their upload early</li>
+          </ul>
+          <p>These controls function on a simple, best-effort basis.</p>
+        </section>
+
+        <section>
+          <h2>6. Reported Content</h2>
+          <p>Users may report content through the FadeDrop abuse report form.</p>
+          <p>If content appears to violate laws or these terms, FadeDrop may:</p>
+          <ul>
+            <li>Restrict access temporarily</li>
+            <li>Delete the upload</li>
+            <li>Block future uploads from the same source</li>
+          </ul>
+          <p>The uploader is responsible for the legality of their content.</p>
+        </section>
+
+        <section>
+          <h2>7. Limitation of Liability</h2>
+          <p>To the fullest extent allowed by law:</p>
+          <ul>
+            <li>FadeDrop is not responsible for uploaded content</li>
+            <li>FadeDrop is not liable for data loss, deletion, or service issues</li>
+            <li>FadeDrop is not responsible for misuse of shared links</li>
+            <li>Uploaders are fully responsible for the content they share</li>
+          </ul>
+          <p>Use of FadeDrop is at your own risk.</p>
+        </section>
+
+        <section>
+          <h2>8. Privacy</h2>
+          <p>FadeDrop collects minimal information and deletes files automatically after expiration. For details, see the <a href="/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a>.</p>
+        </section>
+
+        <section>
+          <h2>9. Changes to These Terms</h2>
+          <p>We may update these Terms at any time. The “Last updated” date will be revised when changes occur. Continued use of FadeDrop means you accept the updated Terms.</p>
+        </section>
+
+        <section>
+          <h2>10. Contact</h2>
+          <p>For reports or concerns, please use our online Report Abuse form. Response times may vary.</p>
+        </section>
+      </div>
+    </main>
+  </div>
+</body>
+</html>`;
+}
+
+function getPrivacyPageHtml() {
+  const lastUpdated = new Date().toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+  });
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Privacy • FadeDrop</title>
+  <style>
+    ${getWarmCss()}
+    .prose { margin-top: 1rem; display: grid; gap: 1rem; }
+    .prose h2 { margin: 0.75rem 0 0.25rem; font-size: 1.05rem; }
+    .prose p { margin: 0.25rem 0; }
+    .prose ul { margin: 0.25rem 0 0.5rem; padding-left: 1.15rem; color: var(--muted); }
+    .prose li { margin: 0.25rem 0; }
+    .meta { font-size: 0.85rem; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="top-header">
+      <div class="brand">FadeDrop</div>
+      <p class="tagline">Privacy Policy</p>
+    </header>
+    <main class="card card-narrow">
+      <h1>Privacy Policy</h1>
+      <p class="meta">Last updated: ${lastUpdated}</p>
+
+      <div class="prose">
+        <section>
+          <p>FadeDrop is designed to make temporary sharing simple and private. This Privacy Policy explains what information we collect, how we use it, and how your data is handled. We keep things minimal by design.</p>
+        </section>
+
+        <section>
+          <h2>1. What FadeDrop Does</h2>
+          <p>FadeDrop allows you to upload media files (images, video, audio) and generate temporary, unlisted links. Uploads automatically expire and are deleted after a short grace period.</p>
+          <p>We do not require accounts, do not run ads, and do not sell data.</p>
+        </section>
+
+        <section>
+          <h2>2. What Data We Collect</h2>
+          <p>FadeDrop collects only the information needed to operate the temporary link service.</p>
+
+          <h2>2.1 Data you provide</h2>
+          <ul>
+            <li>Media files you upload</li>
+            <li>Expiration settings</li>
+            <li>Optional password (stored as a secure hash)</li>
+          </ul>
+
+          <h2>2.2 Data generated automatically</h2>
+          <ul>
+            <li>Upload timestamp</li>
+            <li>A random ID for the dashboard and view link</li>
+            <li>View counts (how many times the link was opened)</li>
+          </ul>
+
+          <h2>2.3 Optional, for safety</h2>
+          <ul>
+            <li>A hashed version of your IP address (to help prevent abuse; FadeDrop does not store full IPs)</li>
+          </ul>
+
+          <p>We do not collect names, email addresses, phone numbers, or any personal account information.</p>
+        </section>
+
+        <section>
+          <h2>3. How Your Data Is Used</h2>
+          <p>We use your data only to:</p>
+          <ul>
+            <li>Host your uploaded files until expiration</li>
+            <li>Provide the view link and dashboard link</li>
+            <li>Enforce password access, expiration times, and view limits</li>
+            <li>Automatically delete expired files</li>
+            <li>Detect and prevent abuse or harmful activity</li>
+          </ul>
+          <p>FadeDrop does not use your data for analytics, advertising, or marketing.</p>
+        </section>
+
+        <section>
+          <h2>4. How Long Data Is Stored</h2>
+          <h2>4.1 Uploaded files</h2>
+          <ul>
+            <li>Accessible until your chosen expiration time</li>
+            <li>Become unviewable after expiration</li>
+            <li>Permanently deleted after a 24-hour grace period</li>
+            <li>Cannot be recovered after deletion</li>
+          </ul>
+
+          <h2>4.2 Metadata</h2>
+          <p>Non-personal metadata (timestamps, counters) may be stored briefly for operational purposes and then removed during cleanup.</p>
+        </section>
+
+        <section>
+          <h2>5. Passwords</h2>
+          <p>If you add a password to your upload:</p>
+          <ul>
+            <li>We store only a hashed version (never plaintext)</li>
+            <li>We cannot recover the password if lost</li>
+            <li>Viewers must enter the correct password to access content</li>
+          </ul>
+        </section>
+
+        <section>
+          <h2>6. Abuse Reports</h2>
+          <p>If someone reports an upload as abusive or illegal:</p>
+          <ul>
+            <li>FadeDrop may disable or delete the content</li>
+            <li>FadeDrop may store report details (reason, timestamp, hashed IP)</li>
+            <li>Serious reports may result in immediate deletion</li>
+          </ul>
+          <p>We do not share report information unless required by law.</p>
+        </section>
+
+        <section>
+          <h2>7. Third-Party Services</h2>
+          <p>FadeDrop may use standard hosting or storage providers to deliver files. These providers only store data necessary for the service to function.</p>
+        </section>
+
+        <section>
+          <h2>8. Security</h2>
+          <p>We take reasonable steps to protect data, including:</p>
+          <ul>
+            <li>Limiting collection of personal information</li>
+            <li>Automatically deleting files after expiration</li>
+            <li>Storing passwords only as secure hashes</li>
+            <li>Avoiding accounts or long-term identifiers</li>
+          </ul>
+          <p>No service is perfectly secure, but FadeDrop is designed to reduce risk by limiting what we collect and how long we keep it.</p>
+        </section>
+
+        <section>
+          <h2>9. Your Choices</h2>
+          <p>You can:</p>
+          <ul>
+            <li>Delete your upload early using the dashboard link</li>
+            <li>Use a password to restrict access</li>
+            <li>Choose short expiration times</li>
+            <li>Avoid uploading sensitive personal information</li>
+          </ul>
+          <p>Since we do not use accounts, there is no personal account data to access, modify, or delete.</p>
+        </section>
+
+        <section>
+          <h2>10. Children’s Privacy</h2>
+          <p>FadeDrop is not intended for use by children under 13. Uploading or sharing harmful or illegal content involving minors is strictly prohibited and may be reported to authorities if required by law.</p>
+        </section>
+
+        <section>
+          <h2>11. Changes to This Policy</h2>
+          <p>We may update this Privacy Policy as FadeDrop evolves. When changes are made, the “Last updated” date will be revised. Continued use of the service means you accept the updated policy.</p>
+        </section>
+
+        <section>
+          <h2>12. Contact</h2>
+          <p>If you need to report abuse or ask questions about privacy, you can submit a report using our online form.</p>
+        </section>
+      </div>
+    </main>
+  </div>
+</body>
+</html>`;
+}
+
 function sendNotFoundPage(res) {
   return res.status(404).send(`<!DOCTYPE html>
 <html lang="en">
@@ -729,8 +1082,15 @@ function getUploadPageHtml(options = {}) {
     .btn-primary { padding: 0.9rem 1.55rem; border-radius: 999px; border: 1px solid rgba(47, 107, 79, 0.25); background: var(--accent); color: #fffaf2; font-weight: 650; font-size: 1.02rem; cursor: pointer; box-shadow: 0 18px 38px -30px rgba(47, 107, 79, 0.95); }
     .btn-primary:hover { filter: brightness(1.03); }
     .btn-primary:focus-visible { outline: 3px solid rgba(47, 107, 79, 0.25); outline-offset: 2px; }
+    .terms-wrap { justify-self: end; max-width: 440px; }
+    .terms-label { display: flex; gap: 0.55rem; align-items: flex-start; font-size: 0.85rem; color: rgba(42, 33, 22, 0.78); line-height: 1.35; }
+    .terms-label input { margin-top: 0.18rem; accent-color: var(--accent); }
+    .terms-label a { color: var(--accent); text-decoration: underline; }
+    .terms-error { margin: 0.35rem 0 0; color: rgba(134, 57, 57, 0.92); font-size: 0.85rem; display: none; }
     .reassure { font-size: 0.82rem; color: var(--muted); text-align: right; max-width: 360px; }
     .trust { margin-top: 0.15rem; font-size: 0.82rem; color: rgba(42, 33, 22, 0.62); text-align: right; }
+    .footer-links { margin-top: 1.25rem; display: flex; justify-content: center; gap: 0.5rem; font-size: 0.85rem; color: var(--muted); }
+    .footer-links a { color: var(--muted); text-decoration: underline; }
 
     @media (max-width: 768px) {
       body { padding: 1.75rem 1.5rem 2.75rem; }
@@ -861,6 +1221,13 @@ function getUploadPageHtml(options = {}) {
 
         <div class="cta-bar">
           <div class="cta-right">
+            <div class="terms-wrap">
+              <label class="terms-label" for="termsAccepted">
+                <input id="termsAccepted" name="termsAccepted" type="checkbox" value="true" />
+                <span>I confirm this content is legal, I have the right to share it, and I take full responsibility for this upload. I agree to the FadeDrop <a href="/terms" target="_blank" rel="noopener noreferrer">Terms of Use</a>.</span>
+              </label>
+              <p id="terms-error" class="terms-error">You must confirm that your content is legal and that you take responsibility before creating a link.</p>
+            </div>
             <button type="submit" class="btn-primary">Create link</button>
             <div class="reassure">
               Files are automatically deleted after expiration.
@@ -870,9 +1237,19 @@ function getUploadPageHtml(options = {}) {
         </div>
       </section>
     </form>
+
+    <div class="footer-links">
+      <a href="/terms" target="_blank" rel="noopener noreferrer">Terms</a>
+      <span>·</span>
+      <a href="/privacy" target="_blank" rel="noopener noreferrer">Privacy</a>
+    </div>
   </div>
 
   <script>
+    const formEl = document.querySelector('form[action="/upload"]');
+    const termsCheckbox = document.getElementById('termsAccepted');
+    const termsErrorEl = document.getElementById('terms-error');
+
     const mediaInputs = document.querySelectorAll('input[name="mediaType"]');
     const visibleFilesInput = document.getElementById('files-input');
     const dropzone = document.getElementById('dropzone');
@@ -1151,6 +1528,29 @@ function getUploadPageHtml(options = {}) {
 
     setSelectedMediaType(getSelectedMediaType());
     updateTimingPreview();
+
+    function hideTermsError() {
+      if (termsErrorEl) termsErrorEl.style.display = 'none';
+    }
+
+    if (termsCheckbox) {
+      termsCheckbox.addEventListener('change', () => {
+        if (termsCheckbox.checked) hideTermsError();
+      });
+    }
+
+    if (formEl) {
+      formEl.addEventListener('submit', (event) => {
+        if (!termsCheckbox || !termsCheckbox.checked) {
+          event.preventDefault();
+          if (termsErrorEl) termsErrorEl.style.display = 'block';
+          if (termsCheckbox) termsCheckbox.focus();
+          return false;
+        }
+        hideTermsError();
+        return true;
+      });
+    }
   </script>
 </body>
 </html>`;
@@ -1162,6 +1562,14 @@ app.get('/', (req, res) => {
 
 app.get('/status', (req, res) => {
   res.status(200).send(getStatusPageHtml());
+});
+
+app.get('/terms', (req, res) => {
+  res.status(200).send(getTermsPageHtml());
+});
+
+app.get('/privacy', (req, res) => {
+  res.status(200).send(getPrivacyPageHtml());
 });
 
 app.post(
@@ -1181,6 +1589,13 @@ app.post(
       const mediaType = (req.body && req.body.mediaType) || 'images';
       const expiresValueRaw = (req.body && req.body.expiresValue) || '1';
       const expiresUnitRaw = (req.body && req.body.expiresUnit) || 'days';
+
+      const termsRaw = (req.body && req.body.termsAccepted) || '';
+      const termsNormalized = String(termsRaw).trim().toLowerCase();
+      const termsAccepted = termsNormalized === 'true' || termsNormalized === 'on' || termsNormalized === '1';
+      if (!termsAccepted) {
+        return sendValidationError(res, 'Terms required', 'You must accept the terms before creating a link.');
+      }
 
       if (!uploadedFiles.length) {
         return sendValidationError(res, 'No files selected', 'Please choose at least one file to upload.');
@@ -1224,6 +1639,8 @@ app.post(
         id,
         mediaType,
         files,
+        termsAccepted: true,
+        termsVersion: 'v1',
         expiration: {
           value: expiresValue,
           unit: expiresUnit,
@@ -1585,6 +2002,8 @@ app.post('/dashboard/:id/password', (req, res) => {
 
   const passwordStatus = record.password ? 'Password enabled' : 'No password set';
 
+  const termsStatus = record.termsAccepted ? 'Accepted (' + (record.termsVersion || 'v1') + ')' : 'Not recorded';
+
   const views = Number.isFinite(record.viewCount) ? record.viewCount : 0;
   const maxViews = record.maxViews;
   const maxViewsLabel = Number.isInteger(maxViews) && maxViews > 0 ? String(maxViews) : 'none';
@@ -1632,6 +2051,15 @@ app.post('/dashboard/:id/password', (req, res) => {
     feedbackHtml = '<p style="margin-top:0.5rem;font-size:0.85rem;color:#bbf7d0;">View limit removed. This link now has no maximum view limit.</p>';
   } else if (viewError === 'invalid') {
     feedbackHtml = '<p style="margin-top:0.5rem;font-size:0.85rem;color:#fca5a5;">Please enter a positive whole number up to 100000 for max viewers.</p>';
+  } else if (viewError === 'belowCurrent') {
+    feedbackHtml =
+      '<p style="margin-top:0.5rem;font-size:0.85rem;color:#fca5a5;">Max viewers cannot be set below current view count (' +
+      views +
+      ').</p>';
+  } else if (viewError === 'decrease') {
+    feedbackHtml = '<p style="margin-top:0.5rem;font-size:0.85rem;color:#fca5a5;">View limit can only be increased or removed.</p>';
+  } else if (viewError === 'inactive') {
+    feedbackHtml = '<p style="margin-top:0.5rem;font-size:0.85rem;color:#fca5a5;">View limit can only be changed while the link is still active or in its grace period.</p>';
   } else if (expMessage === 'extended') {
     feedbackHtml = '<p style="margin-top:0.5rem;font-size:0.85rem;color:#bbf7d0;">Expiration extended successfully.</p>';
   } else if (expError === 'invalid') {
@@ -1737,6 +2165,8 @@ app.post('/dashboard/:id/password', (req, res) => {
           <dd>${record.mediaType}</dd>
           <dt>Created</dt>
           <dd>${createdAt}</dd>
+          <dt>Terms</dt>
+          <dd>${termsStatus}</dd>
           <dt>Expires</dt>
           <dd>${expiresAt}</dd>
           <dt>Auto-deletes at</dt>
@@ -2049,9 +2479,6 @@ app.post('/dashboard/:id/password', (req, res) => {
     <main class="card card-narrow">
       <h1>${heading}</h1>
       <p>${message}</p>
-      <div class="actions">
-        <a class="btn-secondary" href="/">Back to upload</a>
-      </div>
     </main>
   </div>
 </body>
@@ -2061,6 +2488,31 @@ app.post('/dashboard/:id/password', (req, res) => {
   const now = Date.now();
   const expiresAtMs = Date.parse(record.expiration?.expiresAt || record.createdAt || new Date().toISOString());
   const isExpired = Number.isFinite(expiresAtMs) ? now >= expiresAtMs : false;
+
+  if (isExpired) {
+    return res.status(410).send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Expired • FadeDrop</title>
+  <style>
+    ${getWarmCss()}
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="top-header">
+      <div class="brand">FadeDrop</div>
+    </header>
+    <main class="card card-narrow">
+      <h1>This content has expired</h1>
+      <p>The link you tried to open has expired and is no longer available.</p>
+    </main>
+  </div>
+</body>
+</html>`);
+  }
 
   const currentViews = Number.isFinite(record.viewCount) ? record.viewCount : 0;
   const maxViews = Number.isInteger(record.maxViews) && record.maxViews > 0 ? record.maxViews : null;
@@ -2083,10 +2535,6 @@ app.post('/dashboard/:id/password', (req, res) => {
     <main class="card card-narrow">
       <h1>View limit reached</h1>
       <p>This content is no longer available because the maximum view limit has been reached.</p>
-      <div class="actions">
-        <a class="btn-secondary" href="/">Back to upload</a>
-        <a class="btn-primary" href="/dashboard/${record.id}?key=${encodeURIComponent(record.dashboardKey)}" target="_blank" rel="noopener noreferrer">Link settings</a>
-      </div>
     </main>
   </div>
 </body>
@@ -2114,7 +2562,6 @@ app.post('/dashboard/:id/password', (req, res) => {
     <main class="card card-narrow">
       <h1>Unable to display content</h1>
       <p class="error">This upload record does not contain any files that can be shown.</p>
-      <p class="back-link"><a href="/">Back to upload</a></p>
     </main>
   </div>
 </body>
@@ -2161,7 +2608,6 @@ app.post('/dashboard/:id/password', (req, res) => {
         <input class="input" type="password" id="password" name="password" autocomplete="current-password" required />
         <button class="btn-primary" type="submit">Unlock</button>
       </form>
-      <p class="back-link"><a href="/">Back to upload</a></p>
     </main>
   </div>
 </body>
@@ -2295,7 +2741,6 @@ app.post('/dashboard/:id/password', (req, res) => {
       <h1>Shared content</h1>
       ${expiresMetaHtml}
       ${mediaHtml}
-      <p class="back-link"><a href="/">Back to upload</a></p>
     </main>
   </div>
 </body>
